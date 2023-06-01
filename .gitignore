@@ -1,0 +1,8 @@
+ignore
+build
+*.exe
+*.out
+*.pdb
+*.txt
+*.mp3
+*.flac

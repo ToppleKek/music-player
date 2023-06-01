@@ -1,0 +1,15 @@
+Language: Cpp
+BasedOnStyle: Chromium
+IndentPPDirectives: AfterHash
+IndentCaseLabels: false
+AlwaysBreakTemplateDeclarations: false
+DerivePointerAlignment: false
+IndentWidth: 4
+AccessModifierOffset: -4
+ColumnLimit: 170
+PointerAlignment: Right
+SpaceAfterCStyleCast: true
+IndentGotoLabels: false
+AlwaysBreakTemplateDeclarations: Yes
+SpaceAfterTemplateKeyword: false
+# AlignAfterOpenBracket: BlockIndent
