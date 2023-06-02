@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <iostream>
 #include <vector>
+#include <cstring>
 #include "common.hpp"
 
 u32 to_le32(u32 be) {

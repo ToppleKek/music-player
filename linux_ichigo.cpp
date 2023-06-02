@@ -2,15 +2,21 @@
 #include <cstdio>
 #include "ichigo.hpp"
 #include "thirdparty/imgui/imgui_impl_sdl2.h"
+#include <SDL2/SDL_timer.h>
+#include <ftw.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_video.h>
 #include <SDL2/SDL_vulkan.h>
+#include <sys/asoundlib.h>
 #include "vulkan.hpp"
 
 static SDL_Window *window;
 static u32 previous_height = 1920;
 static u32 previous_width = 1080;
 static bool init_completed = false;
+
+static snd_pcm_t *asound_handle = nullptr;
+static snd_pcm_hw_params_t *asound_hw_params = nullptr;
 
 // TODO: These are global because we need to use them to calculate the play cursor delta if we are in WM_PAINT
 // Maybe this will be resolved when we put our render in a separate thread?
@@ -20,42 +26,64 @@ std::FILE *Ichigo::platform_open_file(const std::string &path, const std::string
     return std::fopen(path.c_str(), mode.c_str());
 }
 
-// void init_dsound(HWND window) {
-//     assert(SUCCEEDED(DirectSoundCreate8(nullptr, &direct_sound, nullptr)) &&
-//            SUCCEEDED(direct_sound->SetCooperativeLevel(window, DSSCL_NORMAL)));
-// }
+// TODO: We should probably change this API for every platform
+static std::vector<std::string> files;
 
-// void realloc_dsound_buffer(u32 samples_per_second, u32 buffer_size) {
-//     if (secondary_dsound_buffer)
-//         secondary_dsound_buffer->Release();
-
-//     WAVEFORMATEX wave_format = {};
-//     wave_format.wFormatTag = WAVE_FORMAT_PCM;
-//     wave_format.nChannels = 2;
-//     wave_format.nSamplesPerSec = samples_per_second;
-//     wave_format.wBitsPerSample = 16;
-//     wave_format.nBlockAlign = wave_format.nChannels * wave_format.wBitsPerSample / 8;
-//     wave_format.nAvgBytesPerSec = wave_format.nSamplesPerSec * wave_format.nBlockAlign;
-//     wave_format.cbSize = 0;
-
-//     DSBUFFERDESC secondary_buffer_description = {};
-//     secondary_buffer_description.dwSize = sizeof(secondary_buffer_description);
-//     secondary_buffer_description.dwFlags = DSBCAPS_GLOBALFOCUS | DSBCAPS_TRUEPLAYPOSITION;
-//     secondary_buffer_description.dwBufferBytes = buffer_size;
-//     secondary_buffer_description.lpwfxFormat = &wave_format;
-
-//     IDirectSoundBuffer *query_secondary_dsound_buffer;
-
-//     assert(SUCCEEDED(direct_sound->CreateSoundBuffer(&secondary_buffer_description,
-//                                                      &query_secondary_dsound_buffer, nullptr)));
-//     assert(SUCCEEDED(query_secondary_dsound_buffer->QueryInterface(
-//         IID_IDirectSoundBuffer8, reinterpret_cast<void **>(&secondary_dsound_buffer))));
-
-//     query_secondary_dsound_buffer->Release();
-// }
-
-u64 write_samples(u8 *samples, u64 bytes_to_write, u64 last_written_pos) {
+int visit_node(const char *fpath, const struct stat *sb, int tflag, struct FTW *ftwbuf) {
+    files.emplace_back(fpath);
     return 0;
+}
+
+std::vector<std::string> Ichigo::platform_recurse_directory(const std::string &path) {
+    nftw(path.c_str(), visit_node, 20, FTW_DEPTH);
+    return files;
+}
+
+// TODO: STUB!
+void Ichigo::platform_playback_set_state(const Ichigo::PlayerState state) {
+
+}
+
+// TODO: STUB!
+void Ichigo::platform_playback_reset_for_seek(bool should_play) {
+
+}
+
+u64 write_samples(snd_pcm_sframes_t frames) {
+    u64 buffer_size = frames * sizeof(i16) * Ichigo::current_song->channel_count;
+    static u8 sample_buffer[200000] = {};
+
+    assert(buffer_size <= 200000);
+
+    Ichigo::fill_sample_buffer(sample_buffer, buffer_size);
+    snd_pcm_writei(asound_handle, sample_buffer, frames);
+    return 0;
+}
+
+static void realloc_asound_buffer(u32 samples_per_second, u32 buffer_size_in_frames) {
+    if (asound_handle) {
+        snd_pcm_drop(asound_handle);
+        snd_pcm_close(asound_handle);
+        asound_handle = nullptr;
+    }
+
+    assert(snd_pcm_open(&asound_handle, "default", SND_PCM_STREAM_PLAYBACK, 0) >= 0);
+    assert(snd_pcm_hw_params_malloc(&asound_hw_params) >= 0);
+    assert(snd_pcm_hw_params_any(asound_handle, asound_hw_params) >= 0);
+    assert(snd_pcm_hw_params_set_access(asound_handle, asound_hw_params, SND_PCM_ACCESS_RW_INTERLEAVED) >= 0);
+    assert(snd_pcm_hw_params_set_format(asound_handle, asound_hw_params, SND_PCM_FORMAT_S16_LE) >= 0);
+    assert(snd_pcm_hw_params_set_channels(asound_handle, asound_hw_params, 2) >= 0); // TODO: More than 2 channels?
+    assert(snd_pcm_hw_params_set_rate_near(asound_handle, asound_hw_params, &samples_per_second, 0) >= 0);
+
+
+    assert(snd_pcm_hw_params(asound_handle, asound_hw_params) >= 0);
+    snd_pcm_hw_params_free(asound_hw_params);
+    asound_hw_params = nullptr;
+
+    assert(snd_pcm_prepare(asound_handle) >= 0);
+
+    snd_pcm_sframes_t pcm_frames_available = snd_pcm_avail_update(asound_handle);
+    write_samples(pcm_frames_available);
 }
 
 i32 main(i32, char **) {
@@ -73,9 +101,7 @@ i32 main(i32, char **) {
     Ichigo::vk_context.init(extensions, num_extensions);
 
     VkSurfaceKHR vk_surface;
-    if (SDL_Vulkan_CreateSurface(window, Ichigo::vk_context.vk_instance, &vk_surface) != SDL_TRUE) {
-
-    }
+    assert(SDL_Vulkan_CreateSurface(window, Ichigo::vk_context.vk_instance, &vk_surface));
 
     Ichigo::vk_context.surface = vk_surface;
     Ichigo::init();
@@ -104,26 +130,14 @@ i32 main(i32, char **) {
 
         if (Ichigo::must_realloc_sound_buffer) {
             std::printf("realloc sound buffer\n");
+            realloc_asound_buffer(Ichigo::current_song->sample_rate, Ichigo::current_song->sample_rate * Ichigo::current_song->channel_count * 8);
             Ichigo::must_realloc_sound_buffer = false;
         }
 
         if (Ichigo::current_song) {
+            snd_pcm_sframes_t deliverable_frames = snd_pcm_avail_update(asound_handle);
+            if (deliverable_frames > 0)
+                write_samples(deliverable_frames);
         }
-
-        switch (Ichigo::new_player_state) {
-        case Ichigo::PlayerState::PLAYING: {
-        } break;
-
-        case Ichigo::PlayerState::PAUSED: {
-        } break;
-
-        case Ichigo::PlayerState::STOPPED: {
-        } break;
-
-        case Ichigo::PlayerState::NOP: {
-        } break;
-        }
-
-        Ichigo::new_player_state = Ichigo::PlayerState::NOP;
     }
 }

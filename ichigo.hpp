@@ -36,7 +36,6 @@ extern bool must_rebuild_swapchain;
 extern bool must_realloc_sound_buffer;
 extern bool current_song_has_data;
 extern Song *current_song;
-extern PlayerState new_player_state;
 
 void init();
 void do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 play_cursor_delta);
