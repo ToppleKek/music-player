@@ -41,7 +41,23 @@ std::vector<std::string> Ichigo::platform_recurse_directory(const std::string &p
 
 // TODO: STUB!
 void Ichigo::platform_playback_set_state(const Ichigo::PlayerState state) {
-
+    switch (state) {
+        case Ichigo::PlayerState::PLAYING: {
+            if (asound_handle)
+                snd_pcm_pause(asound_handle, 0);
+        } break;
+        case Ichigo::PlayerState::PAUSED: {
+            if (asound_handle)
+                snd_pcm_pause(asound_handle, 1);
+        } break;
+        case Ichigo::PlayerState::STOPPED: {
+            if (asound_handle) {
+                snd_pcm_drop(asound_handle);
+                snd_pcm_close(asound_handle);
+                asound_handle = nullptr;
+            }
+        } break;
+    }
 }
 
 // TODO: STUB!
@@ -74,7 +90,6 @@ static void realloc_asound_buffer(u32 samples_per_second, u32 buffer_size_in_fra
     assert(snd_pcm_hw_params_set_format(asound_handle, asound_hw_params, SND_PCM_FORMAT_S16_LE) >= 0);
     assert(snd_pcm_hw_params_set_channels(asound_handle, asound_hw_params, 2) >= 0); // TODO: More than 2 channels?
     assert(snd_pcm_hw_params_set_rate_near(asound_handle, asound_hw_params, &samples_per_second, 0) >= 0);
-
 
     assert(snd_pcm_hw_params(asound_handle, asound_hw_params) >= 0);
     snd_pcm_hw_params_free(asound_hw_params);
