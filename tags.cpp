@@ -154,7 +154,6 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
     u32 pos = static_cast<u32>(std::ftell(f));
 
     while (std::ftell(f) <= pos + new_size) {
-        i32 ftell_now = std::ftell(f);
         u8 frame_name[5] = {};
         u32 frame_size = 0;
         u16 frame_flags = 0;
@@ -242,6 +241,118 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
     std::fseek(f, initial_position, SEEK_SET);
     return ret;
 }
+
+// Tags::Tag Tags::id3_read_data(u8 *data, u64 len) {
+//     Tags::Tag ret;
+
+//     assert(data[0] == 'I' && data[1] == 'D' && data[2] == '3');
+//     data += 3;
+
+//     ret.version_major = *data++;
+//     ret.version_revision = *data++;
+//     ret.flags = *data++;
+
+//     u32 id3_size = to_le32(*reinterpret_cast<u32 *>(data));
+//     data += 4;
+//     // The ID3 tag size is encoded with four bytes where the first bit (bit 7) is set to zero in every byte,
+//     // making a total of 28 bits. The zeroed bits are ignored.
+//     u32 new_size = (id3_size & 0xFF) | (id3_size & 0xFF00) >> 1 | (id3_size & 0xFF0000) >> 2 |
+//                    (id3_size & 0xFF000000) >> 3;
+//     u32 pos = 0;
+
+//     // FIXME: pos does nothing?
+//     while (pos <= new_size && pos <= len - 10) { // 3 + 3 + 4
+//         u8 frame_name[5] = {};
+//         u32 frame_size = 0;
+//         u16 frame_flags = 0;
+//         std::memcpy(frame_name, data, 4);
+//         data += 4;
+//         std::memcpy(&frame_size, data, 4);
+//         data += 4;
+//         std::memcpy(&frame_flags, data, 2);
+//         data += 2;
+
+//         frame_size = to_le32(frame_size);
+
+//         if (frame_name[0] == 0) {
+//             //std::printf("Reached tag padding.\n");
+//             break;
+//         } else if (std::memcmp(frame_name, "TIT2", 4) == 0) {
+//             u8 type = *data++;
+//             //std::printf("Found TIT2 frame (%d bytes) string type=%d\n", frame_size, type);
+
+//             // 16 bit unicode
+//             if (type == 1)
+//                 ret.title = extract_utf16_string(f, frame_size - 1);
+//             else if (type == 0)
+//                 ret.title = extract_iso8859_string(f, frame_size - 1);
+//         } else if (std::memcmp(frame_name, "TLEN", 4) == 0) {
+//             u8 type = *data++;
+//             //std::printf("Found TLEN frame (%d bytes) string type=%d\n", frame_size, type);
+
+//             if (type == 0)
+//                 ret.length = extract_numeric_string(f, frame_size - 1);
+//         } else if (std::memcmp(frame_name, "TPE1", 4) == 0) {
+//             u8 type = *data++;
+//             //std::printf("Found TPE1 frame (%d bytes) string type=%d\n", frame_size, type);
+
+//             // 16 bit unicode
+//             if (type == 1)
+//                 ret.artist = extract_utf16_string(f, frame_size - 1);
+//             else if (type == 0)
+//                 ret.artist = extract_iso8859_string(f, frame_size - 1);
+//         } else if (std::memcmp(frame_name, "TRCK", 4) == 0) {
+//             u8 type = *data++;
+//             //std::printf("Found TRCK frame (%d bytes) string type=%d\n", frame_size, type);
+
+//             if (type == 0)
+//                 ret.track = extract_numeric_string(f, frame_size - 1);
+//             else if (type == 1)
+//                 ret.track = std::atof(extract_utf16_string(f, frame_size - 1).c_str()); // TODO: !Speed
+//         } else if (std::memcmp(frame_name, "TALB", 4) == 0) {
+//             u8 type = *data++;
+//             //std::printf("Found TALB frame (%d bytes) string type=%d\n", frame_size, type);
+
+//             // 16 bit unicode
+//             if (type == 1)
+//                 ret.album = extract_utf16_string(f, frame_size - 1);
+//             else if (type == 0)
+//                 ret.album = extract_iso8859_string(f, frame_size - 1);
+//         } else if (std::memcmp(frame_name, "APIC", 4) == 0) {
+//             i64 start_pos = std::ftell(f);
+
+//             u8 encoding = *data++;
+
+//             std::string mime_type = extract_iso8859_string(f, 64, '\0');
+//             u8 picture_type = *data++;
+//             std::string description;
+//             if (encoding == 0) {
+//                 description = extract_iso8859_string(f, 64, '\0');
+//             } else if (encoding == 1) {
+//                 //std::printf("this file is %s\n", ret.title.c_str());
+//                 description = extract_utf16_string(f, 64);
+//             }
+//             //std::printf("Found APIC frame (%d bytes) string type=%d\n\tAPIC MIME type=%s picture_type=%hu description=%s\n", frame_size, encoding, mime_type.c_str(), picture_type, description.c_str());
+
+//             const i64 picture_data_length = frame_size - (std::ftell(f) - start_pos);
+//             std::fseek(f, picture_data_length, SEEK_CUR);
+//             // u8 *picture_data = new u8[picture_data_length];
+//             // std::fread(picture_data, 1, picture_data_length, f);
+
+//             // // TODO: Change this
+//             // std::FILE *cover_file = std::fopen("cover.jpg", "wb");
+//             // std::fwrite(picture_data, 1, picture_data_length, cover_file);
+//             // std::fclose(cover_file);
+//             // delete[] picture_data;
+//         } else {
+//             //std::printf("Skipping unknown frame: %s (%d bytes)\n", frame_name, frame_size);
+//             std::fseek(f, frame_size, SEEK_CUR);
+//         }
+//     }
+
+//     std::fseek(f, initial_position, SEEK_SET);
+//     return ret;
+// }
 
 Tags::Tag Tags::id3_read_path(const std::string &path) {
     std::FILE *f = Ichigo::platform_open_file(path, "rb");

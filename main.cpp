@@ -67,22 +67,6 @@ bool Ichigo::must_realloc_sound_buffer = false;
 bool Ichigo::current_song_has_data = false;
 Ichigo::Song *Ichigo::current_song = nullptr;
 
-Ichigo::Song::Song(const std::string &path, const Ichigo::SongFormat format) : path(path), format(format) {
-    switch (format) {
-    case Ichigo::SongFormat::MP3: {
-        tag = Tags::id3_read_path(path);
-    } break;
-    case Ichigo::SongFormat::FLAC: {
-        tag = Tags::flac_read_path(path);
-    } break;
-    }
-}
-
-// static auto anata = Ichigo::Song("06. あなたはサキュレント.mp3", Ichigo::SongFormat::MP3);
-// static auto reflection = Ichigo::Song { .path = "12 - 調和 oto ～with reflection～.flac" };
-// static auto reflection = Ichigo::Song("12 - 調和 oto ～with reflection～.flac", Ichigo::SongFormat::FLAC);
-// static auto kira = Ichigo::Song("t.mp3", Ichigo::SongFormat::MP3);
-
 static void check_vk_result(VkResult err) {
     if (err == 0)
         return;
@@ -538,7 +522,7 @@ void Ichigo::init() {
 
     initial_style = ImGui::GetStyle();
 
-    // IchigoDB::init_for_path("Z:/syncthing/Music Library");
-    IchigoDB::init_for_path("./full library");
+    IchigoDB::init_for_path("Z:/syncthing/Music Library");
+    // IchigoDB::init_for_path("./full library");
     // IchigoDB::init_for_path("./fixing");
 }

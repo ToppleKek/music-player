@@ -11,16 +11,11 @@ enum class SongFormat {
 };
 
 struct Song {
-    Song() = default;
-    explicit Song(const std::string &path, const SongFormat format);
     u64 duration = 0;
     u64 duration_in_bytes = 0;
     u32 sample_rate = 0;
     u32 channel_count = 0;
-    // u64 bytes_decoded = 0;
-    bool eof = false;
     std::string path; // TODO: remove?
-    // std::FILE *file;
     Tags::Tag tag;
     SongFormat format;
 };
@@ -30,6 +25,10 @@ enum class PlayerState {
     PAUSED,
     STOPPED,
 };
+
+// struct Thread;
+// using ThreadEntryProc = i32(void *);
+using FileVisitProc = void(const std::string &);
 
 extern IchigoVulkan::Context vk_context;
 extern bool must_rebuild_swapchain;
@@ -41,8 +40,10 @@ void init();
 void do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 play_cursor_delta);
 u64 fill_sample_buffer(u8 *buffer, u64 buffer_size);
 
+// Thread *platform_create_thread(ThreadEntryProc *entry_proc, void *data);
 std::FILE *platform_open_file(const std::string &path, const std::string &mode);
 std::vector<std::string> platform_recurse_directory(const std::string &path);
+void platform_recurse_directory_async(const std::string &path, FileVisitProc callback);
 void platform_playback_set_state(const Ichigo::PlayerState state);
 void platform_playback_reset_for_seek(bool should_play);
 }

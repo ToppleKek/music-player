@@ -5,5 +5,6 @@
 
 namespace IchigoDB {
 void init_for_path(const std::string &music_directory);
+void refresh(const std::string &music_directory);
 std::vector<Ichigo::Song> *all_songs();
 }  // namespace IchigoDB
