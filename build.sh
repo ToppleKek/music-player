@@ -7,7 +7,16 @@ LIBS="user32 ${VULKAN_SDK}/Lib/vulkan-1.lib -lgdi32 -lwinmm -lsetupapi -loleaut3
 EXE_NAME="music.exe"
 INCLUDE="./include -I ${VULKAN_SDK}/Include"
 
+mkdir -p build
+
 if [ "${1}" = "run" ]; then
+    cd build
+    ./$EXE_NAME
+    exit 0
+fi
+
+if [ "${1}" = "br" ]; then
+    clang ${CXX_FLAGS} -l ${LIBS} -I ${INCLUDE} ${CXX_FILES} -o build/${EXE_NAME}
     cd build
     ./$EXE_NAME
     exit 0

@@ -27,8 +27,6 @@ enum class PlayerState {
 };
 
 // struct Thread;
-// using ThreadEntryProc = i32(void *);
-using FileVisitProc = void(const std::string &);
 
 extern IchigoVulkan::Context vk_context;
 extern bool must_rebuild_swapchain;
@@ -42,8 +40,7 @@ u64 fill_sample_buffer(u8 *buffer, u64 buffer_size);
 
 // Thread *platform_create_thread(ThreadEntryProc *entry_proc, void *data);
 std::FILE *platform_open_file(const std::string &path, const std::string &mode);
-std::vector<std::string> platform_recurse_directory(const std::string &path);
-void platform_recurse_directory_async(const std::string &path, FileVisitProc callback);
+std::vector<std::string> platform_recurse_directory(const std::string &path, const std::vector<const char *> &extension_filter);
 void platform_playback_set_state(const Ichigo::PlayerState state);
 void platform_playback_reset_for_seek(bool should_play);
 }

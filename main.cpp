@@ -341,26 +341,29 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
     ImGui::BeginChild("play controls", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
 
     if (ImGui::BeginTable("songs", 4)) {
-        auto all_songs = IchigoDB::all_songs();
+        // auto all_songs = IchigoDB::all_songs();
         i32 selected_song = -1;
+        u64 size = IchigoDB::size();
 
-        for (u32 i = 0; i < all_songs->size(); ++i) {
+        for (u32 i = 0; i < size; ++i) {
+            Ichigo::Song *song = IchigoDB::song(i);
+
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            if (ImGui::Selectable(all_songs->at(i).tag.title.c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
+            if (ImGui::Selectable(song->tag.title.c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
                 selected_song = i;
 
             ImGui::TableNextColumn();
-            ImGui::Text("%s", all_songs->at(i).tag.artist.c_str());
+            ImGui::Text("%s", song->tag.artist.c_str());
             ImGui::TableNextColumn();
-            ImGui::Text("%s", all_songs->at(i).tag.album.c_str());
+            ImGui::Text("%s", song->tag.album.c_str());
         }
 
         ImGui::EndTable();
 
         if (selected_song != -1) {
             std::printf("selected song changed to %d\n", selected_song);
-            change_song_and_play(&all_songs->at(selected_song));
+            change_song_and_play(IchigoDB::song(selected_song));
         }
     }
 
@@ -408,7 +411,7 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
         player_state = Ichigo::PlayerState::STOPPED;
         Ichigo::platform_playback_set_state(player_state);
         deinit_avcodec();
-        Ichigo::current_song = nullptr;
+        Ichigo::current_song = {};
         play_cursor = 0;
     }
 
@@ -422,7 +425,7 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
         player_state = Ichigo::PlayerState::STOPPED;
         Ichigo::platform_playback_set_state(player_state);
         deinit_avcodec();
-        Ichigo::current_song = nullptr;
+        Ichigo::current_song = {};
         play_cursor = 0;
     }
 

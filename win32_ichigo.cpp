@@ -2,9 +2,6 @@
 #include "common.hpp"
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <cstdio>
-#include <queue>
-#include <mutex>
-#include <semaphore>
 #include "ichigo.hpp"
 #include "thirdparty/imgui/imgui_impl_win32.h"
 
@@ -79,14 +76,34 @@ std::FILE *Ichigo::platform_open_file(const std::string &path, const std::string
     return ret;
 }
 
-void visit_directory(const wchar_t *path, std::vector<std::string> *files) {
+static bool is_filtered_file(const wchar_t *filename, const std::vector<const char *> &extension_filter) {
+    // Find the last period in the file name
+    u64 period_index = 0;
+    for (u64 current_index; filename[current_index] != '\0'; ++current_index) {
+        if (filename[current_index] == '.')
+            period_index = current_index;
+    }
+
+    wchar_t ext_wide[16] = {};
+    for (auto ext : extension_filter) {
+        i32 buf_size = MultiByteToWideChar(CP_UTF8, 0, ext, -1, nullptr, 0);
+        assert(buf_size <= 16);
+        MultiByteToWideChar(CP_UTF8, 0, ext, -1, ext_wide, buf_size);
+
+        if (std::wcscmp(&filename[period_index + 1], ext_wide) == 0)
+            return true;
+    }
+
+    return false;
+}
+
+void visit_directory(const wchar_t *path, std::vector<std::string> *files, const std::vector<const char *> &extension_filter) {
     HANDLE find_handle;
     WIN32_FIND_DATAW find_data;
     wchar_t path_with_filter[2048] = {};
     std::wcscat(path_with_filter, path);
     std::wcscat(path_with_filter, L"\\*");
 
-    std::wprintf(L"search path: %s\n", path_with_filter);
     if ((find_handle = FindFirstFileW(path_with_filter, &find_data)) != INVALID_HANDLE_VALUE) {
         do {
             if (std::wcscmp(find_data.cFileName, L".") == 0 || std::wcscmp(find_data.cFileName, L"..") == 0)
@@ -95,9 +112,11 @@ void visit_directory(const wchar_t *path, std::vector<std::string> *files) {
             if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
                 wchar_t sub_dir[2048] = {};
                 _snwprintf(sub_dir, 2048, L"%s/%s", path, find_data.cFileName);
-                std::wprintf(L"Visiting directory: %s\n", sub_dir);
-                visit_directory(sub_dir, files);
+                visit_directory(sub_dir, files, extension_filter);
             } else {
+                if (!is_filtered_file(find_data.cFileName, extension_filter))
+                    continue;
+
                 wchar_t full_path[2048] = {};
                 _snwprintf(full_path, 2048, L"%s/%s", path, find_data.cFileName);
                 i32 wide_filename_len = std::wcslen(full_path);
@@ -117,94 +136,7 @@ void visit_directory(const wchar_t *path, std::vector<std::string> *files) {
     }
 }
 
-struct FileQueueEntry {
-    std::string path;
-};
-
-template<typename T>
-struct LockedQueue {
-    void queue(T item) {
-        std::lock_guard<std::mutex> guard(m_mutex);
-        m_queue.push(item);
-        m_semaphore.release();
-    }
-
-    T wait_and_dequeue() {
-        m_semaphore.acquire();
-        std::lock_guard<std::mutex> guard(m_mutex);
-        FileQueueEntry ret = m_queue.front();
-        m_queue.pop();
-        return ret;
-    }
-
-    bool empty() {
-        std::lock_guard<std::mutex> guard(m_mutex);
-        return m_queue.empty();
-    }
-
-private:
-    std::mutex m_mutex;
-    std::queue<T> m_queue;
-    std::counting_semaphore<INT64_MAX> m_semaphore{0};
-};
-
-void visit_directory_overlapped(const wchar_t *path, LockedQueue<FileQueueEntry> *work_queue) {
-    HANDLE find_handle;
-    WIN32_FIND_DATAW find_data;
-    wchar_t path_with_filter[2048] = {};
-    std::wcscat(path_with_filter, path);
-    std::wcscat(path_with_filter, L"\\*");
-
-    // std::wprintf(L"search path: %s\n", path_with_filter);
-    if ((find_handle = FindFirstFileW(path_with_filter, &find_data)) != INVALID_HANDLE_VALUE) {
-        do {
-            if (std::wcscmp(find_data.cFileName, L".") == 0 || std::wcscmp(find_data.cFileName, L"..") == 0)
-                continue;
-
-            if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                wchar_t sub_dir[2048] = {};
-                _snwprintf(sub_dir, 2048, L"%s/%s", path, find_data.cFileName);
-                // std::wprintf(L"Visiting directory: %s\n", sub_dir);
-                visit_directory_overlapped(sub_dir, work_queue);
-            } else {
-                // HANDLE file_handle = CreateFileW(find_data.cFileName, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr);
-                // if (file_handle == INVALID_HANDLE_VALUE) {
-                    // std::printf("(win32 plat) warn: failed to open path: CreateFileW: invalid handle\n");
-                    // continue;
-                // }
-
-                // LARGE_INTEGER file_size;
-                // if (!GetFileSizeEx(file_handle, &file_size)) {
-                    // std::printf("(win32 plat) warn: failed to get file size\n");
-                    // continue;
-                // }
-
-                // u8 *file_data = new u8[file_size.QuadPart];
-                // OVERLAPPED overlapped = {};
-
-                // ReadFile(file_handle, file_data, file_size.QuadPart, nullptr, &overlapped);
-
-                // TODO: Stupid? This gets the path in a u8 string so we can pass it to the callback function. Required to check the format via file extension. Kinda retarded im thinking?
-                wchar_t full_path[2048] = {};
-                _snwprintf(full_path, 2048, L"%s/%s", path, find_data.cFileName);
-                i32 wide_filename_len = std::wcslen(full_path);
-                i32 u8_buf_size = WideCharToMultiByte(CP_UTF8, 0, full_path, -1, nullptr, 0, nullptr, nullptr);
-                char *u8_bytes = new char[u8_buf_size]();
-                WideCharToMultiByte(CP_UTF8, 0, full_path, -1, u8_bytes, u8_buf_size, nullptr, nullptr);
-
-                work_queue->queue({ u8_bytes });
-                delete[] u8_bytes;
-            }
-        } while (FindNextFileW(find_handle, &find_data) != 0);
-
-        FindClose(find_handle);
-    } else {
-        auto error = GetLastError();
-        std::printf("error=%d\n", error);
-    }
-}
-
-std::vector<std::string> Ichigo::platform_recurse_directory(const std::string &path) {
+std::vector<std::string> Ichigo::platform_recurse_directory(const std::string &path, const std::vector<const char *> &extension_filter) {
     std::vector<std::string> ret;
 
     i32 buf_size = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
@@ -212,50 +144,10 @@ std::vector<std::string> Ichigo::platform_recurse_directory(const std::string &p
     wchar_t *wide_buf = new wchar_t[buf_size]();
     MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wide_buf, buf_size);
 
-    visit_directory(wide_buf, &ret);
+    visit_directory(wide_buf, &ret, extension_filter);
 
     delete[] wide_buf;
     return ret;
-}
-
-void process_queue(LockedQueue<FileQueueEntry> *work_queue, std::binary_semaphore *recurse_complete_semaphore, Ichigo::FileVisitProc callback) {
-    bool recurse_completed = false;
-    while (!recurse_completed || !work_queue->empty()) {
-        FileQueueEntry entry = work_queue->wait_and_dequeue();
-        callback(entry.path);
-
-        if (recurse_complete_semaphore->try_acquire())
-            recurse_completed = true;
-
-        // if (recurse_completed && work_queue->empty())
-            // break;
-    }
-
-    std::printf("recurse worker: directory processing complete\n");
-    // TODO: Retarded
-    delete recurse_complete_semaphore;
-    delete work_queue;
-}
-
-// FIXME: Retarded as fuck. This should probably not be done in the platform?
-// Maybe we can just use the normal platform_recurse_directory and have the application
-// start up a thread and process the vector of directories instead.
-// But right now, we can't have the worker go out of scope. So... uh...
-static std::thread worker;
-void Ichigo::platform_recurse_directory_async(const std::string &path, Ichigo::FileVisitProc callback) {
-    auto recurse_complete_semaphore = new std::binary_semaphore{0};
-    i32 buf_size = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
-    assert(buf_size > 0);
-    wchar_t *wide_buf = new wchar_t[buf_size]();
-    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wide_buf, buf_size);
-
-    auto work_queue = new LockedQueue<FileQueueEntry>;
-    worker = std::thread{process_queue, work_queue, recurse_complete_semaphore, callback};
-    visit_directory_overlapped(wide_buf, work_queue);
-    std::printf("platform_recurse_directory_async: releasing work completed semaphore\n");
-    recurse_complete_semaphore->release();
-
-    delete[] wide_buf;
 }
 
 void Ichigo::platform_playback_set_state(const Ichigo::PlayerState state) {
