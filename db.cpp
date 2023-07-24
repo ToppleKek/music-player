@@ -75,6 +75,10 @@ u64 IchigoDB::size() {
     return num_songs;
 }
 
+// FIXME: It is possible that a thread completes the processing of a song ahead of another thread
+//        such that we report x number of songs being available (from ::size()), but one thread is
+//        not actually done processing the one at x. I.e. size() reports 5 because thread 2 finished
+//        song #6, while thread 1 is still working on song #5. So trying to access 5 is invalid.
 Ichigo::Song *IchigoDB::song(u64 i) {
     return &songs[i];
 }

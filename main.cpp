@@ -326,7 +326,7 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
 
     ImGui::SetNextWindowPos({0, 0});
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-    ImGui::Begin("Test Window", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize);
+    ImGui::Begin("main_window", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize);
     ImGui::Text("FPS=%.1f", ImGui::GetIO().Framerate);
 
     // if (ImGui::Button("Anata"))
@@ -340,8 +340,17 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
 
     ImGui::BeginChild("play controls", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
 
-    if (ImGui::BeginTable("songs", 4)) {
-        // auto all_songs = IchigoDB::all_songs();
+    if (ImGui::BeginTable("songs", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti)) {
+        ImGui::TableSetupColumn("Title", 0);
+        ImGui::TableSetupColumn("Artist", 0);
+        ImGui::TableSetupColumn("Album", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableHeadersRow();
+
+        ImGuiTableSortSpecs *sort_specs;
+        if ((sort_specs = ImGui::TableGetSortSpecs()) && sort_specs->SpecsDirty) {
+        }
+
         i32 selected_song = -1;
         u64 size = IchigoDB::size();
 

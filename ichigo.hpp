@@ -15,7 +15,7 @@ struct Song {
     u64 duration_in_bytes = 0;
     u32 sample_rate = 0;
     u32 channel_count = 0;
-    std::string path; // TODO: remove?
+    std::string path;
     Tags::Tag tag;
     SongFormat format;
 };

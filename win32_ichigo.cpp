@@ -382,9 +382,9 @@ i32 main() {
     window_class.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
     window_class.lpfnWndProc = window_proc;
     window_class.hInstance = instance;
-    window_class.lpszClassName = "musicplayer";
+    window_class.lpszClassName = "ichigo";
     RegisterClass(&window_class);
-    window_handle = CreateWindowEx(0, window_class.lpszClassName, "Music Player", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 1920, 1080, nullptr,
+    window_handle = CreateWindowEx(0, window_class.lpszClassName, "Ichigo", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 1920, 1080, nullptr,
                                    nullptr, instance, nullptr);
 
     assert(window_handle);
