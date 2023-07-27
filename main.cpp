@@ -54,6 +54,12 @@ static ImFontConfig font_config;
 static u64 play_cursor = 0;
 static Ichigo::PlayerState player_state = Ichigo::PlayerState::STOPPED;
 
+static u64 last_total_song_count = 0;
+static u64 last_processed_song_count = 0;
+static u64 *sorted_song_indicies = nullptr;
+static u64 sorted_song_indicies_length = 0;
+static ImGuiTableSortSpecs *current_song_table_sort_specs = nullptr;
+
 static drmp3 mp3;
 static drflac *flac;
 
@@ -66,6 +72,12 @@ bool Ichigo::must_rebuild_swapchain = false;
 bool Ichigo::must_realloc_sound_buffer = false;
 bool Ichigo::current_song_has_data = false;
 Ichigo::Song *Ichigo::current_song = nullptr;
+
+enum {
+    SongTableTitleColumnID,
+    SongTableArtistColumnID,
+    SongTableAlbumColumnID
+};
 
 static void check_vk_result(VkResult err) {
     if (err == 0)
@@ -248,7 +260,76 @@ static void change_song_and_play(Ichigo::Song *new_song) {
     Ichigo::must_realloc_sound_buffer = true;
 }
 
+static void sorted_song_index_list_insert_range(u64 start, u64 end) {
+    if (!current_song_table_sort_specs)
+        return;
+
+    // u64 start_time = __rdtsc();
+
+#define DO_SORT(PROPERTY, COMPARE_OPERATOR)                                                                          \
+    {                                                                                                                \
+    for (u64 i = start; i < end; ++i) {                                                                              \
+        u64 j = 0;                                                                                                   \
+        Ichigo::Song *song_to_insert = IchigoDB::song(i);                                                            \
+        for (; j < sorted_song_indicies_length; ++j) {                                                               \
+            if (IchigoDB::song(sorted_song_indicies[j])->tag.PROPERTY COMPARE_OPERATOR song_to_insert->tag.PROPERTY) \
+                break;                                                                                               \
+        }                                                                                                            \
+        for (u64 k = sorted_song_indicies_length; k > j; --k)                                                        \
+            sorted_song_indicies[k] = sorted_song_indicies[k - 1];                                                   \
+        sorted_song_indicies[j] = song_to_insert->id;                                                                \
+        ++sorted_song_indicies_length;                                                                               \
+    }                                                                                                                \
+    }                                                                                                                \
+
+    switch (current_song_table_sort_specs->Specs[0].ColumnUserID) {
+        case SongTableTitleColumnID: {
+            if (current_song_table_sort_specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending)
+                DO_SORT(title, >)
+            else
+                DO_SORT(title, <)
+        } break;
+        case SongTableArtistColumnID: {
+            if (current_song_table_sort_specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending)
+                DO_SORT(artist, >)
+            else
+                DO_SORT(artist, <)
+        } break;
+        case SongTableAlbumColumnID: {
+            if (current_song_table_sort_specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending)
+                DO_SORT(album, >)
+            else
+                DO_SORT(album, <)
+        } break;
+    }
+
+#undef DO_SORT
+
+    // u64 end_time = __rdtsc();
+    // std::printf("sorted_song_index_list_insert_range: finished in %llu cycles.\n", end_time - start_time);
+}
+
+static void do_sorted_song_index_list_resort() {
+    sorted_song_indicies_length = 0;
+    sorted_song_index_list_insert_range(0, IchigoDB::processed_size());
+}
+
 void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 play_cursor_delta) {
+    const u64 new_total_size = IchigoDB::total_size();
+    if (last_total_song_count != new_total_size) {
+        if (sorted_song_indicies)
+            delete[] sorted_song_indicies;
+
+        last_total_song_count = new_total_size;
+        sorted_song_indicies = new u64[last_total_song_count];
+    }
+
+    const u64 new_processed_size = IchigoDB::processed_size();
+    if (last_processed_song_count != new_processed_size) {
+        sorted_song_index_list_insert_range(last_processed_song_count, new_processed_size);
+        last_processed_song_count = new_processed_size;
+    }
+
     if (Ichigo::must_rebuild_swapchain) {
         std::printf("Rebuilding swapchain\n");
         ImGui_ImplVulkan_SetMinImageCount(2);
@@ -329,53 +410,53 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
     ImGui::Begin("main_window", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize);
     ImGui::Text("FPS=%.1f", ImGui::GetIO().Framerate);
 
-    // if (ImGui::Button("Anata"))
-    //     change_song_and_play(&anata);
-
-    // if (ImGui::Button("Reflection"))
-    //     change_song_and_play(&reflection);
-
-    // if (ImGui::Button("Kira"))
-    //     change_song_and_play(&kira);
-
-    ImGui::BeginChild("play controls", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
-
-    if (ImGui::BeginTable("songs", 4, ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti)) {
-        ImGui::TableSetupColumn("Title", 0);
-        ImGui::TableSetupColumn("Artist", 0);
-        ImGui::TableSetupColumn("Album", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending);
+    ImGui::BeginChild("song_table", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
+    if (ImGui::BeginTable("songs", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Sortable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
+        ImGui::TableSetupColumn("Title", 0, 0, SongTableTitleColumnID);
+        ImGui::TableSetupColumn("Artist", 0, 0, SongTableArtistColumnID);
+        ImGui::TableSetupColumn("Album", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortAscending, 0, SongTableAlbumColumnID);
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
+        Ichigo::Song *selected_song = nullptr;
 
-        ImGuiTableSortSpecs *sort_specs;
-        if ((sort_specs = ImGui::TableGetSortSpecs()) && sort_specs->SpecsDirty) {
-        }
+        if (sorted_song_indicies) {
 
-        i32 selected_song = -1;
-        u64 size = IchigoDB::size();
+            u64 size = IchigoDB::processed_size();
+            ImGuiTableSortSpecs *sort_specs;
+            if (size && (sort_specs = ImGui::TableGetSortSpecs()) && sort_specs->SpecsDirty) {
+                current_song_table_sort_specs = sort_specs;
+                do_sorted_song_index_list_resort();
+                sort_specs->SpecsDirty = false;
+            }
 
-        for (u32 i = 0; i < size; ++i) {
-            Ichigo::Song *song = IchigoDB::song(i);
+            ImGuiListClipper clipper;
+            clipper.Begin(sorted_song_indicies_length);
+            while (clipper.Step()) {
+                for (u32 i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                    Ichigo::Song *song = IchigoDB::song(sorted_song_indicies[i]);
 
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            if (ImGui::Selectable(song->tag.title.c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
-                selected_song = i;
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    if (ImGui::Selectable(song->tag.title.c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
+                        selected_song = song;
 
-            ImGui::TableNextColumn();
-            ImGui::Text("%s", song->tag.artist.c_str());
-            ImGui::TableNextColumn();
-            ImGui::Text("%s", song->tag.album.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", song->tag.artist.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", song->tag.album.c_str());
+                }
+            }
+
+            clipper.End();
         }
 
         ImGui::EndTable();
 
-        if (selected_song != -1) {
-            std::printf("selected song changed to %d\n", selected_song);
-            change_song_and_play(IchigoDB::song(selected_song));
+        if (selected_song) {
+            std::printf("selected song changed to %llu\n", selected_song->id);
+            change_song_and_play(selected_song);
         }
     }
-
     ImGui::EndChild();
     ImGui::BeginGroup();
     if (Ichigo::current_song)
@@ -536,5 +617,5 @@ void Ichigo::init() {
 
     IchigoDB::init_for_path("Z:/syncthing/Music Library");
     // IchigoDB::init_for_path("./full library");
-    // IchigoDB::init_for_path("./fixing");
+    // IchigoDB::init_for_path("./music");
 }

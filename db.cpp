@@ -3,16 +3,22 @@
 #include <filesystem>
 #include <thread>
 
-// static std::vector<Ichigo::Song> songs;
+#define NUM_THREADS 2
+
+static u64 thread_last_processed_index[NUM_THREADS]{};
 static Ichigo::Song *songs = nullptr;
 static std::atomic<u64> num_songs = 0;
+static u64 number_of_files = 0;
+static std::thread refresh_worker;
+static bool should_kill_self = false;
+static bool currently_processing = false;
 
 void IchigoDB::init_for_path(const std::string &music_directory) {
     refresh(music_directory);
 }
 
-void thread_work(std::vector<std::string> *files, std::atomic<u64> *index) {
-    for (;;) {
+void thread_work(const std::vector<std::string> *files, std::atomic<u64> *index, u8 my_id) {
+    while (!should_kill_self) {
         u64 this_index = (*index)++;
         if (this_index >= files->size())
             break;
@@ -20,6 +26,7 @@ void thread_work(std::vector<std::string> *files, std::atomic<u64> *index) {
         Ichigo::SongFormat format;
         Ichigo::Song s;
 
+        s.id = this_index;
         s.path = files->at(this_index);
 
         if (s.path.ends_with(".mp3")) {
@@ -46,39 +53,59 @@ void thread_work(std::vector<std::string> *files, std::atomic<u64> *index) {
         else
             continue;
 
-
         songs[this_index] = s;
         num_songs++;
+        thread_last_processed_index[my_id] = this_index;
     }
 }
 
-void process_files(std::vector<std::string> files) {
+static void process_files(std::string music_directory) {
+    const std::vector<std::string> files = Ichigo::platform_recurse_directory(music_directory, {"mp3", "flac"});
+    number_of_files = files.size();
+    songs = new Ichigo::Song[number_of_files];
     std::atomic<u64> index = 0;
-    std::vector<std::jthread> threads{2};
+    std::thread threads[NUM_THREADS];
 
-    for (u32 i = 0; i < 2; ++i)
-        threads.emplace_back(thread_work, &files, &index);
+    for (u8 i = 0; i < NUM_THREADS; ++i)
+        threads[i] = std::thread{thread_work, &files, &index, i};
+
+    for (u8 i = 0; i < NUM_THREADS; ++i)
+        threads[i].join();
+
+    currently_processing = false;
 }
 
-// FIXME: Not thread safe, should we cancel any ongoing refresh requests before we enter?
 void IchigoDB::refresh(const std::string &music_directory) {
+    if (refresh_worker.joinable()) {
+        should_kill_self = true;
+        refresh_worker.join();
+        should_kill_self = false;
+    }
+
     if (songs)
         delete[] songs;
 
-    const std::vector<std::string> files = Ichigo::platform_recurse_directory(music_directory, {"mp3", "flac"});
-    songs = new Ichigo::Song[files.size()];
-    std::thread worker{process_files, files};
-    worker.detach();
+    currently_processing = true;
+    refresh_worker = std::thread{process_files, music_directory};
 }
 
-u64 IchigoDB::size() {
-    return num_songs;
+u64 IchigoDB::processed_size() {
+    if (!currently_processing)
+        return num_songs;
+
+    u64 min = thread_last_processed_index[0];
+    for (u8 i = 1; i < NUM_THREADS; ++i) {
+        if (min > thread_last_processed_index[i])
+            min = thread_last_processed_index[i];
+    }
+
+    return min;
 }
 
-// FIXME: It is possible that a thread completes the processing of a song ahead of another thread
-//        such that we report x number of songs being available (from ::size()), but one thread is
-//        not actually done processing the one at x. I.e. size() reports 5 because thread 2 finished
-//        song #6, while thread 1 is still working on song #5. So trying to access 5 is invalid.
+u64 IchigoDB::total_size() {
+    return number_of_files;
+}
+
 Ichigo::Song *IchigoDB::song(u64 i) {
     return &songs[i];
 }

@@ -11,10 +11,11 @@ enum class SongFormat {
 };
 
 struct Song {
-    u64 duration = 0;
-    u64 duration_in_bytes = 0;
-    u32 sample_rate = 0;
-    u32 channel_count = 0;
+    u64 id;
+    u64 duration;
+    u64 duration_in_bytes;
+    u32 sample_rate;
+    u32 channel_count;
     std::string path;
     Tags::Tag tag;
     SongFormat format;
@@ -40,7 +41,7 @@ u64 fill_sample_buffer(u8 *buffer, u64 buffer_size);
 
 // Thread *platform_create_thread(ThreadEntryProc *entry_proc, void *data);
 std::FILE *platform_open_file(const std::string &path, const std::string &mode);
-std::vector<std::string> platform_recurse_directory(const std::string &path, const std::vector<const char *> &extension_filter);
+std::vector<std::string> platform_recurse_directory(const std::string &path, const std::vector<const char *> extension_filter);
 void platform_playback_set_state(const Ichigo::PlayerState state);
 void platform_playback_reset_for_seek(bool should_play);
 }

@@ -79,7 +79,7 @@ std::FILE *Ichigo::platform_open_file(const std::string &path, const std::string
 static bool is_filtered_file(const wchar_t *filename, const std::vector<const char *> &extension_filter) {
     // Find the last period in the file name
     u64 period_index = 0;
-    for (u64 current_index; filename[current_index] != '\0'; ++current_index) {
+    for (u64 current_index = 0; filename[current_index] != '\0'; ++current_index) {
         if (filename[current_index] == '.')
             period_index = current_index;
     }
@@ -136,7 +136,7 @@ void visit_directory(const wchar_t *path, std::vector<std::string> *files, const
     }
 }
 
-std::vector<std::string> Ichigo::platform_recurse_directory(const std::string &path, const std::vector<const char *> &extension_filter) {
+std::vector<std::string> Ichigo::platform_recurse_directory(const std::string &path, const std::vector<const char *> extension_filter) {
     std::vector<std::string> ret;
 
     i32 buf_size = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
