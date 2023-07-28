@@ -8,21 +8,9 @@
 #include "ichigo.hpp"
 #include "tags.hpp"
 #include "vulkan/vulkan_core.h"
-
-// extern "C" {
-// #include <libavcodec/avcodec.h>
-// #include <libavformat/avformat.h>
-// #include <libavutil/frame.h>
-// #include <libavutil/mem.h>
-// #include <libavutil/opt.h>
-// #include <libswresample/swresample.h>
-// }
-
 #include "vulkan.hpp"
-
 #include "thirdparty/imgui/imgui.h"
 #include "thirdparty/imgui/imgui_impl_vulkan.h"
-// #include "thirdparty/imgui/imgui_impl_win32.h"
 
 #define DR_MP3_IMPLEMENTATION
 #include "dr_mp3.h"
@@ -429,6 +417,8 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
                 sort_specs->SpecsDirty = false;
             }
 
+            // FIXME: When I had a library that only had one album in it, it appears that something was completely broken and was sometimes showing all the songs duplicated
+            // but it would resolve itself when you sorted. I don't know if this is the fault of the clipper or what part is broken
             ImGuiListClipper clipper;
             clipper.Begin(sorted_song_indicies_length);
             while (clipper.Step()) {
@@ -483,16 +473,20 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
         Ichigo::platform_playback_reset_for_seek(player_state == Ichigo::PlayerState::PLAYING);
     }
 
-    if (ImGui::Button("Play") && player_state != Ichigo::PlayerState::PLAYING && Ichigo::current_song) {
-        player_state = Ichigo::PlayerState::PLAYING;
-        Ichigo::platform_playback_set_state(player_state);
-    }
-
-    ImGui::SameLine();
-
-    if (ImGui::Button("Pause") && player_state != Ichigo::PlayerState::PAUSED && Ichigo::current_song) {
-        player_state = Ichigo::PlayerState::PAUSED;
-        Ichigo::platform_playback_set_state(player_state);
+    if (player_state == Ichigo::PlayerState::PLAYING) {
+        if (ImGui::Button("Pause") && Ichigo::current_song) {
+            player_state = Ichigo::PlayerState::PAUSED;
+            Ichigo::platform_playback_set_state(player_state);
+        }
+    } else if (player_state == Ichigo::PlayerState::PAUSED) {
+        if (ImGui::Button("Play") && Ichigo::current_song) {
+            player_state = Ichigo::PlayerState::PLAYING;
+            Ichigo::platform_playback_set_state(player_state);
+        }
+    } else {
+        ImGui::BeginDisabled();
+        ImGui::Button("Play");
+        ImGui::EndDisabled();
     }
 
     ImGui::SameLine();

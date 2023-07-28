@@ -6,10 +6,7 @@
 
 namespace Tags {
 struct Tag {
-    u8 version_major;
-    u8 version_revision;
     u32 track;
-    u32 flags;
     u64 length;
     std::string title;
     std::string artist;

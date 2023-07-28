@@ -23,7 +23,6 @@ void thread_work(const std::vector<std::string> *files, std::atomic<u64> *index,
         if (this_index >= files->size())
             break;
 
-        Ichigo::SongFormat format;
         Ichigo::Song s;
 
         s.id = this_index;

@@ -7,8 +7,24 @@
 #include <cstring>
 #include "common.hpp"
 
+bool str_equal_no_case(const char *lhs, const char *rhs) {
+    while (*lhs != '\0' && *rhs != '\0') {
+        ++lhs;
+        ++rhs;
+
+        if (std::tolower(*lhs) != std::tolower(*rhs))
+            return false;
+    }
+
+    return true;
+}
+
 u32 to_le32(u32 be) {
     return (be & 0xFF) << 24 | ((be & 0xFF00) << 8) | (be & 0xFF0000) >> 8 | (be & 0xFF000000) >> 24;
+}
+
+u32 to_le24(u32 be) {
+    return ((be & 0xFF) << 16) | (be & 0xFF00) | ((be & 0xFF0000) >> 16);
 }
 
 u16 to_le16(u16 be) {
@@ -129,9 +145,6 @@ u32 extract_numeric_string(std::FILE *f, u64 n) {
 }
 
 Tags::Tag Tags::id3_read(std::FILE *f) {
-    // Save the original position of this file stream so we can read the tag whenever we want
-    // TODO: I don't know if this is a good idea, or if we even have to do this at all...
-    u32 initial_position = std::ftell(f);
     std::rewind(f);
     Tags::Tag ret;
 
@@ -139,9 +152,16 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
     std::fread(&id3_header, 1, 3, f);
     assert(id3_header[0] == 'I' && id3_header[1] == 'D' && id3_header[2] == '3');
 
-    ret.version_major = static_cast<u8>(std::fgetc(f));
-    ret.version_revision = static_cast<u8>(std::fgetc(f));
-    ret.flags = static_cast<u8>(std::fgetc(f));
+    u8 version_major = static_cast<u8>(std::fgetc(f));
+    [[maybe_unused]] u8 version_revision = static_cast<u8>(std::fgetc(f));
+
+    // TODO: Handle flags
+    [[maybe_unused]] u8 flags = static_cast<u8>(std::fgetc(f));
+
+    if (version_major != 3 && version_major != 2) {
+        std::printf("id3_read: fatal: unsupported ID3 major version: %d\n", version_major);
+        return ret;
+    }
 
     u32 id3_size = 0;
     std::fread(&id3_size, 4, 1, f);
@@ -157,15 +177,24 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
         u8 frame_name[5] = {};
         u32 frame_size = 0;
         u16 frame_flags = 0;
-        std::fread(frame_name, 1, 4, f);
-        std::fread(&frame_size, 1, 4, f);
-        std::fread(&frame_flags, 1, 2, f);
-        frame_size = to_le32(frame_size);
+
+        if (version_major == 2) {
+            std::fread(frame_name, 1, 3, f);
+            std::fread(&frame_size, 1, 3, f);
+
+            frame_size = to_le24(frame_size);
+        } else if (version_major == 3) {
+            std::fread(frame_name, 1, 4, f);
+            std::fread(&frame_size, 1, 4, f);
+            std::fread(&frame_flags, 1, 2, f);
+
+            frame_size = to_le32(frame_size);
+        }
 
         if (frame_name[0] == 0) {
             //std::printf("Reached tag padding.\n");
             break;
-        } else if (std::memcmp(frame_name, "TIT2", 4) == 0) {
+        } else if (std::memcmp(frame_name, "TIT2", 4) == 0 || std::memcmp(frame_name, "TT2", 3) == 0) {
             u8 type = static_cast<u8>(std::fgetc(f));
             //std::printf("Found TIT2 frame (%d bytes) string type=%d\n", frame_size, type);
 
@@ -174,13 +203,17 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
                 ret.title = extract_utf16_string(f, frame_size - 1);
             else if (type == 0)
                 ret.title = extract_iso8859_string(f, frame_size - 1);
-        } else if (std::memcmp(frame_name, "TLEN", 4) == 0) {
+            else
+                std::printf("id3_read: warn: unsupported string type in title frame: %d\n", type);
+        } else if (std::memcmp(frame_name, "TLEN", 4) == 0 || std::memcmp(frame_name, "TLE", 3) == 0) {
             u8 type = static_cast<u8>(std::fgetc(f));
             //std::printf("Found TLEN frame (%d bytes) string type=%d\n", frame_size, type);
 
             if (type == 0)
                 ret.length = extract_numeric_string(f, frame_size - 1);
-        } else if (std::memcmp(frame_name, "TPE1", 4) == 0) {
+            else
+                std::printf("id3_read: warn: unsupported string type in length frame: %d\n", type);
+        } else if (std::memcmp(frame_name, "TPE1", 4) == 0 || std::memcmp(frame_name, "TP1", 3) == 0) {
             u8 type = static_cast<u8>(std::fgetc(f));
             //std::printf("Found TPE1 frame (%d bytes) string type=%d\n", frame_size, type);
 
@@ -189,7 +222,9 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
                 ret.artist = extract_utf16_string(f, frame_size - 1);
             else if (type == 0)
                 ret.artist = extract_iso8859_string(f, frame_size - 1);
-        } else if (std::memcmp(frame_name, "TRCK", 4) == 0) {
+            else
+                std::printf("id3_read: warn: unsupported string type in artist frame: %d\n", type);
+        } else if (std::memcmp(frame_name, "TRCK", 4) == 0 || std::memcmp(frame_name, "TRK", 3) == 0) {
             u8 type = static_cast<u8>(std::fgetc(f));
             //std::printf("Found TRCK frame (%d bytes) string type=%d\n", frame_size, type);
 
@@ -197,7 +232,9 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
                 ret.track = extract_numeric_string(f, frame_size - 1);
             else if (type == 1)
                 ret.track = std::atof(extract_utf16_string(f, frame_size - 1).c_str()); // TODO: !Speed
-        } else if (std::memcmp(frame_name, "TALB", 4) == 0) {
+            else
+                std::printf("id3_read: warn: unsupported string type in track frame: %d\n", type);
+        } else if (std::memcmp(frame_name, "TALB", 4) == 0 || std::memcmp(frame_name, "TAL", 3) == 0) {
             u8 type = static_cast<u8>(std::fgetc(f));
             //std::printf("Found TALB frame (%d bytes) string type=%d\n", frame_size, type);
 
@@ -206,6 +243,8 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
                 ret.album = extract_utf16_string(f, frame_size - 1);
             else if (type == 0)
                 ret.album = extract_iso8859_string(f, frame_size - 1);
+            else
+                std::printf("id3_read: warn: unsupported string type in album frame: %d\n", type);
         } else if (std::memcmp(frame_name, "APIC", 4) == 0) {
             i64 start_pos = std::ftell(f);
 
@@ -238,121 +277,8 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
         }
     }
 
-    std::fseek(f, initial_position, SEEK_SET);
     return ret;
 }
-
-// Tags::Tag Tags::id3_read_data(u8 *data, u64 len) {
-//     Tags::Tag ret;
-
-//     assert(data[0] == 'I' && data[1] == 'D' && data[2] == '3');
-//     data += 3;
-
-//     ret.version_major = *data++;
-//     ret.version_revision = *data++;
-//     ret.flags = *data++;
-
-//     u32 id3_size = to_le32(*reinterpret_cast<u32 *>(data));
-//     data += 4;
-//     // The ID3 tag size is encoded with four bytes where the first bit (bit 7) is set to zero in every byte,
-//     // making a total of 28 bits. The zeroed bits are ignored.
-//     u32 new_size = (id3_size & 0xFF) | (id3_size & 0xFF00) >> 1 | (id3_size & 0xFF0000) >> 2 |
-//                    (id3_size & 0xFF000000) >> 3;
-//     u32 pos = 0;
-
-//     // FIXME: pos does nothing?
-//     while (pos <= new_size && pos <= len - 10) { // 3 + 3 + 4
-//         u8 frame_name[5] = {};
-//         u32 frame_size = 0;
-//         u16 frame_flags = 0;
-//         std::memcpy(frame_name, data, 4);
-//         data += 4;
-//         std::memcpy(&frame_size, data, 4);
-//         data += 4;
-//         std::memcpy(&frame_flags, data, 2);
-//         data += 2;
-
-//         frame_size = to_le32(frame_size);
-
-//         if (frame_name[0] == 0) {
-//             //std::printf("Reached tag padding.\n");
-//             break;
-//         } else if (std::memcmp(frame_name, "TIT2", 4) == 0) {
-//             u8 type = *data++;
-//             //std::printf("Found TIT2 frame (%d bytes) string type=%d\n", frame_size, type);
-
-//             // 16 bit unicode
-//             if (type == 1)
-//                 ret.title = extract_utf16_string(f, frame_size - 1);
-//             else if (type == 0)
-//                 ret.title = extract_iso8859_string(f, frame_size - 1);
-//         } else if (std::memcmp(frame_name, "TLEN", 4) == 0) {
-//             u8 type = *data++;
-//             //std::printf("Found TLEN frame (%d bytes) string type=%d\n", frame_size, type);
-
-//             if (type == 0)
-//                 ret.length = extract_numeric_string(f, frame_size - 1);
-//         } else if (std::memcmp(frame_name, "TPE1", 4) == 0) {
-//             u8 type = *data++;
-//             //std::printf("Found TPE1 frame (%d bytes) string type=%d\n", frame_size, type);
-
-//             // 16 bit unicode
-//             if (type == 1)
-//                 ret.artist = extract_utf16_string(f, frame_size - 1);
-//             else if (type == 0)
-//                 ret.artist = extract_iso8859_string(f, frame_size - 1);
-//         } else if (std::memcmp(frame_name, "TRCK", 4) == 0) {
-//             u8 type = *data++;
-//             //std::printf("Found TRCK frame (%d bytes) string type=%d\n", frame_size, type);
-
-//             if (type == 0)
-//                 ret.track = extract_numeric_string(f, frame_size - 1);
-//             else if (type == 1)
-//                 ret.track = std::atof(extract_utf16_string(f, frame_size - 1).c_str()); // TODO: !Speed
-//         } else if (std::memcmp(frame_name, "TALB", 4) == 0) {
-//             u8 type = *data++;
-//             //std::printf("Found TALB frame (%d bytes) string type=%d\n", frame_size, type);
-
-//             // 16 bit unicode
-//             if (type == 1)
-//                 ret.album = extract_utf16_string(f, frame_size - 1);
-//             else if (type == 0)
-//                 ret.album = extract_iso8859_string(f, frame_size - 1);
-//         } else if (std::memcmp(frame_name, "APIC", 4) == 0) {
-//             i64 start_pos = std::ftell(f);
-
-//             u8 encoding = *data++;
-
-//             std::string mime_type = extract_iso8859_string(f, 64, '\0');
-//             u8 picture_type = *data++;
-//             std::string description;
-//             if (encoding == 0) {
-//                 description = extract_iso8859_string(f, 64, '\0');
-//             } else if (encoding == 1) {
-//                 //std::printf("this file is %s\n", ret.title.c_str());
-//                 description = extract_utf16_string(f, 64);
-//             }
-//             //std::printf("Found APIC frame (%d bytes) string type=%d\n\tAPIC MIME type=%s picture_type=%hu description=%s\n", frame_size, encoding, mime_type.c_str(), picture_type, description.c_str());
-
-//             const i64 picture_data_length = frame_size - (std::ftell(f) - start_pos);
-//             std::fseek(f, picture_data_length, SEEK_CUR);
-//             // u8 *picture_data = new u8[picture_data_length];
-//             // std::fread(picture_data, 1, picture_data_length, f);
-
-//             // // TODO: Change this
-//             // std::FILE *cover_file = std::fopen("cover.jpg", "wb");
-//             // std::fwrite(picture_data, 1, picture_data_length, cover_file);
-//             // std::fclose(cover_file);
-//             // delete[] picture_data;
-//         } else {
-//             //std::printf("Skipping unknown frame: %s (%d bytes)\n", frame_name, frame_size);
-//             std::fseek(f, frame_size, SEEK_CUR);
-//         }
-//     }
-
-//     std::fseek(f, initial_position, SEEK_SET);
-//     return ret;
-// }
 
 Tags::Tag Tags::id3_read_path(const std::string &path) {
     std::FILE *f = Ichigo::platform_open_file(path, "rb");
@@ -362,9 +288,6 @@ Tags::Tag Tags::id3_read_path(const std::string &path) {
 }
 
 Tags::Tag Tags::flac_read(std::FILE *f) {
-    // Save the original position of this file stream so we can read the tag whenever we want
-    // TODO: I don't know if this is a good idea, or if we even have to do this at all...
-    u32 initial_position = std::ftell(f);
     std::rewind(f);
 
     Tags::Tag ret;
@@ -376,9 +299,6 @@ Tags::Tag Tags::flac_read(std::FILE *f) {
         u32 metadata_block_header = 0;
         std::fread(&metadata_block_header, 4, 1, f);
         metadata_block_header = to_le32(metadata_block_header);
-        // This is the last metadata block before audio data
-        if (metadata_block_header & (1 << 31))
-            break;
 
         u8 block_type = (metadata_block_header & (0b01111111 << 24)) >> 24;
         u32 metadata_block_length = (metadata_block_header << 8) >> 8;
@@ -417,11 +337,11 @@ Tags::Tag Tags::flac_read(std::FILE *f) {
                 }
 
                 field_name_buffer[j] = '\0';
-                if (std::strcmp(field_name_buffer, "TITLE") == 0)
+                if (str_equal_no_case(field_name_buffer, "TITLE"))
                     ret.title = &comment_string[j + 1];
-                else if (std::strcmp(field_name_buffer, "ARTIST") == 0)
+                else if (str_equal_no_case(field_name_buffer, "ARTIST"))
                     ret.artist = &comment_string[j + 1];
-                else if (std::strcmp(field_name_buffer, "ALBUM") == 0)
+                else if (str_equal_no_case(field_name_buffer, "ALBUM"))
                     ret.album = &comment_string[j + 1];
 
                 delete[] comment_string;
@@ -434,11 +354,12 @@ Tags::Tag Tags::flac_read(std::FILE *f) {
         } else {
             std::fseek(f, metadata_block_length, SEEK_CUR);
         }
-        // // Remove the first 8 bits, we only care about the length so we can skip this block
-        // streaminfo_length &= 0xFFFFFF;
+
+        // This is the last metadata block before audio data
+        if (metadata_block_header & (1 << 31))
+            break;
     }
 
-    std::fseek(f, initial_position, SEEK_SET);
     return ret;
 }
 
