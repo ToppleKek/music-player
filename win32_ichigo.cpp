@@ -119,7 +119,6 @@ void visit_directory(const wchar_t *path, std::vector<std::string> *files, const
 
                 wchar_t full_path[2048] = {};
                 _snwprintf(full_path, 2048, L"%s/%s", path, find_data.cFileName);
-                i32 wide_filename_len = std::wcslen(full_path);
                 i32 u8_buf_size = WideCharToMultiByte(CP_UTF8, 0, full_path, -1, nullptr, 0, nullptr, nullptr);
                 char *u8_bytes = new char[u8_buf_size]();
                 WideCharToMultiByte(CP_UTF8, 0, full_path, -1, u8_bytes, u8_buf_size, nullptr, nullptr);
@@ -132,7 +131,7 @@ void visit_directory(const wchar_t *path, std::vector<std::string> *files, const
         FindClose(find_handle);
     } else {
         auto error = GetLastError();
-        std::printf("error=%d\n", error);
+        std::printf("win32 plat: Failed to create find handle! error=%lu\n", error);
     }
 }
 
@@ -255,23 +254,24 @@ static void platform_do_frame() {
     Ichigo::do_frame(previous_width, previous_height, ImGui_ImplWin32_GetDpiScaleForHwnd(window_handle), play_cursor_delta);
 
     if (Ichigo::must_realloc_sound_buffer) {
-        if (secondary_dsound_buffer) {
-            secondary_dsound_buffer->Stop();
-            assert(SUCCEEDED(secondary_dsound_buffer->SetCurrentPosition(0)));
-        }
-
-        last_play_cursor_pos = 0;
-        last_written_pos = 0;
-        dsound_buffer_size = Ichigo::current_song->channel_count * sizeof(i16) * Ichigo::current_song->sample_rate * 8;
-        realloc_dsound_buffer(Ichigo::current_song->sample_rate, dsound_buffer_size);
-        Ichigo::must_realloc_sound_buffer = false;
-
-        // Write one second of samples to the buffer initially so we do not hear silence
         if (Ichigo::current_song) {
+            if (secondary_dsound_buffer) {
+                secondary_dsound_buffer->Stop();
+                assert(SUCCEEDED(secondary_dsound_buffer->SetCurrentPosition(0)));
+            }
+
+            last_play_cursor_pos = 0;
+            last_written_pos = 0;
+            dsound_buffer_size = Ichigo::current_song->channel_count * sizeof(i16) * Ichigo::current_song->sample_rate * 8;
+            realloc_dsound_buffer(Ichigo::current_song->sample_rate, dsound_buffer_size);
+            Ichigo::must_realloc_sound_buffer = false;
+
+            // Write one second of samples to the buffer initially so we do not hear silence
             u64 bytes_to_write = Ichigo::current_song->sample_rate * sizeof(i32);
             Ichigo::fill_sample_buffer(samples, bytes_to_write);
             last_written_pos = write_samples(samples, bytes_to_write, last_written_pos);
-        }
+        } else
+            std::printf("win32 plat: !!! Sound buffer realloc requested, but current_song is null\n");
     }
 
     // TODO: I tested this in WM_TIMER instead so that we don't have to do this every frame, but there seems to be no difference in CPU (rough guess via task manager)
@@ -341,11 +341,11 @@ static LRESULT window_proc(HWND window, u32 msg, WPARAM wparam, LPARAM lparam) {
     case WM_PAINT: {
         // std::printf("WM_PAINT lparam=%lld wparam=%lld\n", lparam, wparam);
         PAINTSTRUCT paint;
-        auto device = BeginPaint(window, &paint);
+        BeginPaint(window, &paint);
 
         if (init_completed) {
-            i32 height = paint.rcPaint.bottom - paint.rcPaint.top;
-            i32 width = paint.rcPaint.right - paint.rcPaint.left;
+            u32 height = paint.rcPaint.bottom - paint.rcPaint.top;
+            u32 width = paint.rcPaint.right - paint.rcPaint.left;
 
             if (height <= 0 || width <= 0)
                 break;
@@ -408,15 +408,15 @@ i32 main() {
 
     // Platform init
     ImGui_ImplWin32_Init(window_handle);
+    SetTimer(window_handle, 0, 500, nullptr);
 
     init_completed = true;
-    u32 timer_id = SetTimer(window_handle, 0, 500, nullptr);
     // Main loop
     for (;;) {
         MSG message;
         while (PeekMessageA(&message, nullptr, 0, 0, PM_REMOVE)) {
             if (message.message == WM_QUIT)
-                return 0;
+                goto exit;
 
             TranslateMessage(&message);
             DispatchMessage(&message);
@@ -425,5 +425,7 @@ i32 main() {
         platform_do_frame();
     }
 
+exit:
+    Ichigo::deinit();
     return 0;
 }

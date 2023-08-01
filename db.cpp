@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <thread>
 
-#define NUM_THREADS 2
+#define NUM_THREADS 6
 
 static u64 thread_last_processed_index[NUM_THREADS]{};
 static Ichigo::Song *songs = nullptr;
@@ -52,6 +52,9 @@ void thread_work(const std::vector<std::string> *files, std::atomic<u64> *index,
         else
             continue;
 
+        if (s.tag.album.length() == 0 && s.tag.artist.length() == 0 && s.tag.title.length() == 0)
+            std::printf("Just parsed a song with blank everything. Path=%s\n", s.path.c_str());
+
         songs[this_index] = s;
         num_songs++;
         thread_last_processed_index[my_id] = this_index;
@@ -72,20 +75,25 @@ static void process_files(std::string music_directory) {
         threads[i].join();
 
     currently_processing = false;
+    std::printf("process_files: All threads have joined: killing myself now\n");
 }
 
 void IchigoDB::refresh(const std::string &music_directory) {
-    if (refresh_worker.joinable()) {
-        should_kill_self = true;
-        refresh_worker.join();
-        should_kill_self = false;
-    }
+    cancel_refresh();
 
     if (songs)
         delete[] songs;
 
     currently_processing = true;
     refresh_worker = std::thread{process_files, music_directory};
+}
+
+void IchigoDB::cancel_refresh() {
+    if (refresh_worker.joinable()) {
+        should_kill_self = true;
+        refresh_worker.join();
+        should_kill_self = false;
+    }
 }
 
 u64 IchigoDB::processed_size() {
@@ -106,5 +114,6 @@ u64 IchigoDB::total_size() {
 }
 
 Ichigo::Song *IchigoDB::song(u64 i) {
+    assert(i >= 0 && i < num_songs);
     return &songs[i];
 }

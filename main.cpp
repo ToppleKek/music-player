@@ -43,7 +43,6 @@ static u64 play_cursor = 0;
 static Ichigo::PlayerState player_state = Ichigo::PlayerState::STOPPED;
 
 static u64 last_total_song_count = 0;
-static u64 last_processed_song_count = 0;
 static u64 *sorted_song_indicies = nullptr;
 static u64 sorted_song_indicies_length = 0;
 static ImGuiTableSortSpecs *current_song_table_sort_specs = nullptr;
@@ -131,6 +130,22 @@ static void deinit_avcodec() {
     }
 }
 
+static void change_song_and_play(Ichigo::Song *new_song) {
+    if (!new_song) {
+        std::printf("change_song_and_play: !!! FUCK: passed a null song!\n");
+        return;
+    }
+
+    player_state = Ichigo::PlayerState::PLAYING;
+    Ichigo::platform_playback_set_state(player_state);
+    play_cursor = 0;
+    deinit_avcodec();
+    init_avcodec_for_song(new_song);
+
+    Ichigo::current_song = new_song;
+    Ichigo::must_realloc_sound_buffer = true;
+}
+
 u64 Ichigo::fill_sample_buffer(u8 *buffer, u64 buffer_size) {
     if (!Ichigo::current_song)
         return 0;
@@ -148,6 +163,10 @@ u64 Ichigo::fill_sample_buffer(u8 *buffer, u64 buffer_size) {
         std::memset(buffer, 0, buffer_size);
 
     return frames_read;
+}
+
+void Ichigo::play_song(u64 id) {
+    change_song_and_play(IchigoDB::song(id));
 }
 
 static std::string s_to_mmss(u32 sec) {
@@ -237,17 +256,6 @@ static void frame_render(ImDrawData *draw_data) {
     check_vk_result(err);
 }
 
-static void change_song_and_play(Ichigo::Song *new_song) {
-    player_state = Ichigo::PlayerState::PLAYING;
-    Ichigo::platform_playback_set_state(player_state);
-    play_cursor = 0;
-    deinit_avcodec();
-    init_avcodec_for_song(new_song);
-
-    Ichigo::current_song = new_song;
-    Ichigo::must_realloc_sound_buffer = true;
-}
-
 static void sorted_song_index_list_insert_range(u64 start, u64 end) {
     if (!current_song_table_sort_specs)
         return;
@@ -263,8 +271,11 @@ static void sorted_song_index_list_insert_range(u64 start, u64 end) {
             if (IchigoDB::song(sorted_song_indicies[j])->tag.PROPERTY COMPARE_OPERATOR song_to_insert->tag.PROPERTY) \
                 break;                                                                                               \
         }                                                                                                            \
-        for (u64 k = sorted_song_indicies_length; k > j; --k)                                                        \
+        for (u64 k = sorted_song_indicies_length; k > j; --k) {                                                      \
+            assert(k < last_total_song_count && k > 0);                                                              \
             sorted_song_indicies[k] = sorted_song_indicies[k - 1];                                                   \
+        }                                                                                                            \
+        assert(j < last_total_song_count);                                                                           \
         sorted_song_indicies[j] = song_to_insert->id;                                                                \
         ++sorted_song_indicies_length;                                                                               \
     }                                                                                                                \
@@ -273,21 +284,21 @@ static void sorted_song_index_list_insert_range(u64 start, u64 end) {
     switch (current_song_table_sort_specs->Specs[0].ColumnUserID) {
         case SongTableTitleColumnID: {
             if (current_song_table_sort_specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending)
-                DO_SORT(title, >)
+                DO_SORT(title, >=)
             else
-                DO_SORT(title, <)
+                DO_SORT(title, <=)
         } break;
         case SongTableArtistColumnID: {
             if (current_song_table_sort_specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending)
-                DO_SORT(artist, >)
+                DO_SORT(artist, >=)
             else
-                DO_SORT(artist, <)
+                DO_SORT(artist, <=)
         } break;
         case SongTableAlbumColumnID: {
             if (current_song_table_sort_specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending)
-                DO_SORT(album, >)
+                DO_SORT(album, >=)
             else
-                DO_SORT(album, <)
+                DO_SORT(album, <=)
         } break;
     }
 
@@ -299,7 +310,9 @@ static void sorted_song_index_list_insert_range(u64 start, u64 end) {
 
 static void do_sorted_song_index_list_resort() {
     sorted_song_indicies_length = 0;
-    sorted_song_index_list_insert_range(0, IchigoDB::processed_size());
+    const u64 size = IchigoDB::processed_size();
+    std::printf("doing full re-sort with size=%llu\n", size);
+    sorted_song_index_list_insert_range(0, size);
 }
 
 void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 play_cursor_delta) {
@@ -313,9 +326,8 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
     }
 
     const u64 new_processed_size = IchigoDB::processed_size();
-    if (last_processed_song_count != new_processed_size) {
-        sorted_song_index_list_insert_range(last_processed_song_count, new_processed_size);
-        last_processed_song_count = new_processed_size;
+    if (sorted_song_indicies_length != new_processed_size) {
+        sorted_song_index_list_insert_range(sorted_song_indicies_length, new_processed_size);
     }
 
     if (Ichigo::must_rebuild_swapchain) {
@@ -417,18 +429,19 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
                 sort_specs->SpecsDirty = false;
             }
 
-            // FIXME: When I had a library that only had one album in it, it appears that something was completely broken and was sometimes showing all the songs duplicated
-            // but it would resolve itself when you sorted. I don't know if this is the fault of the clipper or what part is broken
             ImGuiListClipper clipper;
-            clipper.Begin(sorted_song_indicies_length);
+            clipper.Begin(sorted_song_indicies_length, ImGui::GetTextLineHeightWithSpacing());
             while (clipper.Step()) {
-                for (u32 i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                for (i32 i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
                     Ichigo::Song *song = IchigoDB::song(sorted_song_indicies[i]);
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
+
+                    ImGui::PushID(i);
                     if (ImGui::Selectable(song->tag.title.c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
                         selected_song = song;
+                    ImGui::PopID();
 
                     ImGui::TableNextColumn();
                     ImGui::Text("%s", song->tag.artist.c_str());
@@ -491,27 +504,29 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
 
     ImGui::SameLine();
 
-    if (ImGui::Button("Stop") && player_state != Ichigo::PlayerState::STOPPED && Ichigo::current_song) {
-        player_state = Ichigo::PlayerState::STOPPED;
-        Ichigo::platform_playback_set_state(player_state);
-        deinit_avcodec();
-        Ichigo::current_song = {};
-        play_cursor = 0;
-    }
+#define STOP_IF_NOT_CHANGING_SONGS                         \
+do {                                                       \
+    if (!Ichigo::must_realloc_sound_buffer) {              \
+        player_state = Ichigo::PlayerState::STOPPED;       \
+        Ichigo::platform_playback_set_state(player_state); \
+        deinit_avcodec();                                  \
+        Ichigo::current_song = nullptr;                    \
+        play_cursor = 0;                                   \
+    }                                                      \
+} while (0)                                                \
+
+    if (ImGui::Button("Stop") && player_state != Ichigo::PlayerState::STOPPED && Ichigo::current_song)
+        STOP_IF_NOT_CHANGING_SONGS;
 
     ImGui::EndGroup();
     ImGui::End();
 
     // Stop current song when the play cursor plays over the end of the song
     // TODO: This should play the next song in the queue whenever that is implemented
-    if (player_state == Ichigo::PlayerState::PLAYING && Ichigo::current_song && seconds >= (current_song->duration / 1000.0)) {
-        std::printf("STOPPING\n");
-        player_state = Ichigo::PlayerState::STOPPED;
-        Ichigo::platform_playback_set_state(player_state);
-        deinit_avcodec();
-        Ichigo::current_song = {};
-        play_cursor = 0;
-    }
+    if (player_state == Ichigo::PlayerState::PLAYING && Ichigo::current_song && seconds >= (current_song->duration / 1000.0))
+        STOP_IF_NOT_CHANGING_SONGS;
+
+#undef STOP_IF_NOT_CHANGING_SONGS
 
     ImGui::Render();
     ImDrawData *draw_data = ImGui::GetDrawData();
@@ -612,4 +627,9 @@ void Ichigo::init() {
     IchigoDB::init_for_path("Z:/syncthing/Music Library");
     // IchigoDB::init_for_path("./full library");
     // IchigoDB::init_for_path("./music");
+    // IchigoDB::init_for_path("./fixing");
+}
+
+void Ichigo::deinit() {
+    IchigoDB::cancel_refresh();
 }

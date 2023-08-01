@@ -31,6 +31,10 @@ u16 to_le16(u16 be) {
     return static_cast<u16>((be & 0xFF) << 8 | (be & 0xFF00) >> 8);
 }
 
+u32 u32_from_synchsafe(u32 synchsafe) {
+    return (synchsafe & 0b01111111) | ((synchsafe & (0b01111111 << 8)) >> 1) | ((synchsafe & (0b01111111 << 16)) >> 2) | ((synchsafe & (0b01111111 << 24)) >> 3);
+}
+
 u32 utf16_to_codepoint(u32 utf16) {
     if ((utf16 >= 0 && utf16 <= 0xD7FF) || (utf16 >= 0xE000 && utf16 <= 0xFFFF))
         return utf16;
@@ -56,7 +60,7 @@ u32 codepoint_to_utf8(u32 codepoint) {
 
 std::vector<char> utf16le_to_utf8(u16 *utf16_buf, u64 n) {
     std::vector<char> utf8_str;
-    for (u64 i = 0, j = 0; i < n;) {
+    for (u64 i = 0; i < n;) {
         u32 utf16_bytes;
         if ((utf16_buf[i] >= 0 && utf16_buf[i] <= 0xD7FF) ||
             (utf16_buf[i] >= 0xE000 && utf16_buf[i] <= 0xFFFF))
@@ -158,22 +162,17 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
     // TODO: Handle flags
     [[maybe_unused]] u8 flags = static_cast<u8>(std::fgetc(f));
 
-    if (version_major != 3 && version_major != 2) {
+    if (version_major != 2 && version_major != 3 && version_major != 4) {
         std::printf("id3_read: fatal: unsupported ID3 major version: %d\n", version_major);
         return ret;
     }
 
     u32 id3_size = 0;
     std::fread(&id3_size, 4, 1, f);
-    id3_size = to_le32(id3_size);
-
-    // The ID3 tag size is encoded with four bytes where the first bit (bit 7) is set to zero in every byte,
-    // making a total of 28 bits. The zeroed bits are ignored.
-    u32 new_size = (id3_size & 0xFF) | (id3_size & 0xFF00) >> 1 | (id3_size & 0xFF0000) >> 2 |
-                   (id3_size & 0xFF000000) >> 3;
+    id3_size = u32_from_synchsafe(to_le32(id3_size));
     u32 pos = static_cast<u32>(std::ftell(f));
 
-    while (std::ftell(f) <= pos + new_size) {
+    while (static_cast<u32>(std::ftell(f)) <= pos + id3_size) {
         u8 frame_name[5] = {};
         u32 frame_size = 0;
         u16 frame_flags = 0;
@@ -183,12 +182,15 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
             std::fread(&frame_size, 1, 3, f);
 
             frame_size = to_le24(frame_size);
-        } else if (version_major == 3) {
+        } else if (version_major == 3 || version_major == 4) {
             std::fread(frame_name, 1, 4, f);
             std::fread(&frame_size, 1, 4, f);
             std::fread(&frame_flags, 1, 2, f);
 
             frame_size = to_le32(frame_size);
+
+            if (version_major == 4)
+                frame_size = u32_from_synchsafe(frame_size);
         }
 
         if (frame_name[0] == 0) {
@@ -201,18 +203,22 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
             // 16 bit unicode
             if (type == 1)
                 ret.title = extract_utf16_string(f, frame_size - 1);
-            else if (type == 0)
+            else if (type == 0 || type == 3)
                 ret.title = extract_iso8859_string(f, frame_size - 1);
-            else
+            else {
                 std::printf("id3_read: warn: unsupported string type in title frame: %d\n", type);
+                std::fseek(f, frame_size - 1, SEEK_CUR);
+            }
         } else if (std::memcmp(frame_name, "TLEN", 4) == 0 || std::memcmp(frame_name, "TLE", 3) == 0) {
             u8 type = static_cast<u8>(std::fgetc(f));
             //std::printf("Found TLEN frame (%d bytes) string type=%d\n", frame_size, type);
 
             if (type == 0)
                 ret.length = extract_numeric_string(f, frame_size - 1);
-            else
+            else {
                 std::printf("id3_read: warn: unsupported string type in length frame: %d\n", type);
+                std::fseek(f, frame_size - 1, SEEK_CUR);
+            }
         } else if (std::memcmp(frame_name, "TPE1", 4) == 0 || std::memcmp(frame_name, "TP1", 3) == 0) {
             u8 type = static_cast<u8>(std::fgetc(f));
             //std::printf("Found TPE1 frame (%d bytes) string type=%d\n", frame_size, type);
@@ -220,10 +226,12 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
             // 16 bit unicode
             if (type == 1)
                 ret.artist = extract_utf16_string(f, frame_size - 1);
-            else if (type == 0)
+            else if (type == 0 || type == 3)
                 ret.artist = extract_iso8859_string(f, frame_size - 1);
-            else
+            else {
                 std::printf("id3_read: warn: unsupported string type in artist frame: %d\n", type);
+                std::fseek(f, frame_size - 1, SEEK_CUR);
+            }
         } else if (std::memcmp(frame_name, "TRCK", 4) == 0 || std::memcmp(frame_name, "TRK", 3) == 0) {
             u8 type = static_cast<u8>(std::fgetc(f));
             //std::printf("Found TRCK frame (%d bytes) string type=%d\n", frame_size, type);
@@ -232,8 +240,10 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
                 ret.track = extract_numeric_string(f, frame_size - 1);
             else if (type == 1)
                 ret.track = std::atof(extract_utf16_string(f, frame_size - 1).c_str()); // TODO: !Speed
-            else
+            else {
                 std::printf("id3_read: warn: unsupported string type in track frame: %d\n", type);
+                std::fseek(f, frame_size - 1, SEEK_CUR);
+            }
         } else if (std::memcmp(frame_name, "TALB", 4) == 0 || std::memcmp(frame_name, "TAL", 3) == 0) {
             u8 type = static_cast<u8>(std::fgetc(f));
             //std::printf("Found TALB frame (%d bytes) string type=%d\n", frame_size, type);
@@ -241,17 +251,19 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
             // 16 bit unicode
             if (type == 1)
                 ret.album = extract_utf16_string(f, frame_size - 1);
-            else if (type == 0)
+            else if (type == 0 || type == 3)
                 ret.album = extract_iso8859_string(f, frame_size - 1);
-            else
+            else {
                 std::printf("id3_read: warn: unsupported string type in album frame: %d\n", type);
+                std::fseek(f, frame_size - 1, SEEK_CUR);
+            }
         } else if (std::memcmp(frame_name, "APIC", 4) == 0) {
             i64 start_pos = std::ftell(f);
 
             u8 encoding = static_cast<u8>(std::fgetc(f));
 
             std::string mime_type = extract_iso8859_string(f, 64, '\0');
-            u8 picture_type = static_cast<u8>(std::fgetc(f));
+            [[maybe_unused]] u8 picture_type = static_cast<u8>(std::fgetc(f));
             std::string description;
             if (encoding == 0) {
                 description = extract_iso8859_string(f, 64, '\0');
