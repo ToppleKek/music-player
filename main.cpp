@@ -3,6 +3,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include "util.hpp"
 #include "common.hpp"
 #include "db.hpp"
 #include "ichigo.hpp"
@@ -11,6 +12,8 @@
 #include "vulkan.hpp"
 #include "thirdparty/imgui/imgui.h"
 #include "thirdparty/imgui/imgui_impl_vulkan.h"
+
+#include "play_queue.hpp"
 
 #define DR_MP3_IMPLEMENTATION
 #include "dr_mp3.h"
@@ -410,7 +413,7 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
     ImGui::Begin("main_window", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize);
     ImGui::Text("FPS=%.1f", ImGui::GetIO().Framerate);
 
-    ImGui::BeginChild("song_table", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
+    ImGui::BeginChild("song_table", ImVec2(ImGui::GetContentRegionAvail().x * 0.7, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
     if (ImGui::BeginTable("songs", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Sortable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
         ImGui::TableSetupColumn("Title", 0, 0, SongTableTitleColumnID);
         ImGui::TableSetupColumn("Artist", 0, 0, SongTableArtistColumnID);
@@ -420,7 +423,6 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
         Ichigo::Song *selected_song = nullptr;
 
         if (sorted_song_indicies) {
-
             u64 size = IchigoDB::processed_size();
             ImGuiTableSortSpecs *sort_specs;
             if (size && (sort_specs = ImGui::TableGetSortSpecs()) && sort_specs->SpecsDirty) {
@@ -456,11 +458,15 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
         ImGui::EndTable();
 
         if (selected_song) {
-            std::printf("selected song changed to %llu\n", selected_song->id);
-            change_song_and_play(selected_song);
+            std::printf("playing and adding song_id=%llu next in the queue\n", selected_song->id);
+            change_song_and_play(IchigoDB::song(PlayQueue::set_position(PlayQueue::enqueue_after_current(selected_song->id))));
         }
     }
     ImGui::EndChild();
+
+    ImGui::SameLine();
+    PlayQueue::render();
+
     ImGui::BeginGroup();
     if (Ichigo::current_song)
         ImGui::Text("%s - %s on %s", current_song->tag.artist.c_str(), current_song->tag.title.c_str(), current_song->tag.album.c_str());
@@ -522,9 +528,12 @@ do {                                                       \
     ImGui::End();
 
     // Stop current song when the play cursor plays over the end of the song
-    // TODO: This should play the next song in the queue whenever that is implemented
-    if (player_state == Ichigo::PlayerState::PLAYING && Ichigo::current_song && seconds >= (current_song->duration / 1000.0))
-        STOP_IF_NOT_CHANGING_SONGS;
+    if (player_state == Ichigo::PlayerState::PLAYING && Ichigo::current_song && seconds >= (current_song->duration / 1000.0)) {
+        if (PlayQueue::has_more_songs())
+            change_song_and_play(IchigoDB::song(PlayQueue::next_song_id()));
+        else
+            STOP_IF_NOT_CHANGING_SONGS;
+    }
 
 #undef STOP_IF_NOT_CHANGING_SONGS
 
