@@ -13,6 +13,7 @@ public:
 
     T &at(u64 i) { assert(i < m_size); return m_data[i]; }
     u64 size() const { return m_size; }
+    void clear() { m_size = 0; }
 
     void insert(u64 i, T item) {
         assert(i <= m_size);

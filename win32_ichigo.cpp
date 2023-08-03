@@ -267,7 +267,7 @@ static void platform_do_frame() {
             Ichigo::must_realloc_sound_buffer = false;
 
             // Write one second of samples to the buffer initially so we do not hear silence
-            u64 bytes_to_write = Ichigo::current_song->sample_rate * sizeof(i32);
+            u64 bytes_to_write = Ichigo::current_song->sample_rate * Ichigo::current_song->channel_count * sizeof(i16);
             Ichigo::fill_sample_buffer(samples, bytes_to_write);
             last_written_pos = write_samples(samples, bytes_to_write, last_written_pos);
         } else

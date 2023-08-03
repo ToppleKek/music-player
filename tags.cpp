@@ -154,7 +154,10 @@ Tags::Tag Tags::id3_read(std::FILE *f) {
 
     u8 id3_header[3];
     std::fread(&id3_header, 1, 3, f);
-    assert(id3_header[0] == 'I' && id3_header[1] == 'D' && id3_header[2] == '3');
+    if (id3_header[0] != 'I' || id3_header[1] != 'D' || id3_header[2] != '3') {
+        std::printf("id3_read: fatal: not an id3 tag\n");
+        return ret;
+    }
 
     u8 version_major = static_cast<u8>(std::fgetc(f));
     [[maybe_unused]] u8 version_revision = static_cast<u8>(std::fgetc(f));

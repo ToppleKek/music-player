@@ -48,12 +48,31 @@ u64 PlayQueue::remove_song_at(u64 position) {
     return g_queue.remove(position);
 }
 
+#define CLEAR_QUEUE                                         \
+do {                                                        \
+    Ichigo::set_player_state(Ichigo::PlayerState::STOPPED); \
+    g_current_position = 0;                                 \
+    g_queue.clear();                                        \
+} while (0)                                                 \
+
 void PlayQueue::render() {
-    ImGui::BeginChild("play_queue", ImVec2(ImGui::GetContentRegionAvail().x * 0.3, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
-     if (ImGui::BeginTable("queue_songs_table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
+    ImGui::BeginChild("play_queue", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
+    if (ImGui::BeginTable("queue_songs_table", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
+        if (!ImGui::IsAnyItemHovered() && ImGui::IsMouseReleased(1))
+            ImGui::OpenPopup("queue_songs_table_context_menu");
+
+        if (ImGui::BeginPopup("queue_songs_table_context_menu")) {
+            if (ImGui::Selectable("Clear Queue"))
+                CLEAR_QUEUE;
+
+            ImGui::EndPopup();
+        }
+
         ImGui::TableSetupColumn("*", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("Song", ImGuiTableColumnFlags_WidthStretch);
         u64 selected_queue_index = 0;
+        u64 queue_index_to_remove = 0;
+        bool must_remove = false;
         Ichigo::Song *selected_song = nullptr;
         u64 size = g_queue.size();
 
@@ -63,8 +82,9 @@ void PlayQueue::render() {
             for (i32 i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
+                bool is_current_item = static_cast<u32>(i) == g_current_position;
 
-                if (static_cast<u32>(i) == g_current_position)
+                if (is_current_item)
                     ImGui::Text("*");
 
                 ImGui::TableNextColumn();
@@ -75,6 +95,26 @@ void PlayQueue::render() {
                 if (ImGui::Selectable(song->tag.title.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
                     selected_queue_index = i;
                     selected_song = song;
+                }
+
+                if (ImGui::BeginPopupContextItem()) {
+                    if (is_current_item)
+                        ImGui::BeginDisabled();
+
+                    if (ImGui::Selectable("Remove")) {
+                        queue_index_to_remove = i;
+                        must_remove = true;
+                    }
+
+                    if (is_current_item)
+                        ImGui::EndDisabled();
+
+                    ImGui::Separator();
+
+                    if (ImGui::Selectable("Clear Queue"))
+                        CLEAR_QUEUE;
+
+                    ImGui::EndPopup();
                 }
 
                 ImGui::PopID();
@@ -88,8 +128,12 @@ void PlayQueue::render() {
             g_current_position = selected_queue_index;
             Ichigo::play_song(selected_song->id);
         }
+
+        if (must_remove)
+            remove_song_at(queue_index_to_remove);
     }
 
     ImGui::EndChild();
 }
 
+#undef CLEAR_QUEUE

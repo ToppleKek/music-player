@@ -172,6 +172,28 @@ void Ichigo::play_song(u64 id) {
     change_song_and_play(IchigoDB::song(id));
 }
 
+void Ichigo::set_player_state(Ichigo::PlayerState state) {
+    switch (state) {
+        case PlayerState::PLAYING: {
+            player_state = Ichigo::PlayerState::PLAYING;
+            Ichigo::platform_playback_set_state(player_state);
+        } break;
+        case PlayerState::PAUSED: {
+            player_state = Ichigo::PlayerState::PAUSED;
+            Ichigo::platform_playback_set_state(player_state);
+        } break;
+        case PlayerState::STOPPED: {
+            if (!Ichigo::must_realloc_sound_buffer) {
+                player_state = Ichigo::PlayerState::STOPPED;
+                Ichigo::platform_playback_set_state(player_state);
+                deinit_avcodec();
+                Ichigo::current_song = nullptr;
+                play_cursor = 0;
+            }
+        } break;
+    }
+}
+
 static std::string s_to_mmss(u32 sec) {
     u32 m = sec / 60, s = sec % 60;
     return (m < 10 ? "0" + std::to_string(m) : std::to_string(m)) + ":" + (s < 10 ? "0" + std::to_string(s) : std::to_string(s));
@@ -413,7 +435,7 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
     ImGui::Begin("main_window", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize);
     ImGui::Text("FPS=%.1f", ImGui::GetIO().Framerate);
 
-    ImGui::BeginChild("song_table", ImVec2(ImGui::GetContentRegionAvail().x * 0.7, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
+    ImGui::BeginChild("song_table", ImVec2(ImGui::GetContentRegionAvail().x * 0.8f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetTextLineHeightWithSpacing() * 4));
     if (ImGui::BeginTable("songs", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_Reorderable | ImGuiTableFlags_Sortable | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody)) {
         ImGui::TableSetupColumn("Title", 0, 0, SongTableTitleColumnID);
         ImGui::TableSetupColumn("Artist", 0, 0, SongTableArtistColumnID);
@@ -441,8 +463,19 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
                     ImGui::TableNextColumn();
 
                     ImGui::PushID(i);
+
                     if (ImGui::Selectable(song->tag.title.c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
                         selected_song = song;
+
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::Selectable("Play next"))
+                            PlayQueue::enqueue_after_current(song->id);
+                        if (ImGui::Selectable("Add to queue"))
+                            PlayQueue::enqueue_last(song->id);
+
+                        ImGui::EndPopup();
+                    }
+
                     ImGui::PopID();
 
                     ImGui::TableNextColumn();
@@ -493,15 +526,11 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
     }
 
     if (player_state == Ichigo::PlayerState::PLAYING) {
-        if (ImGui::Button("Pause") && Ichigo::current_song) {
-            player_state = Ichigo::PlayerState::PAUSED;
-            Ichigo::platform_playback_set_state(player_state);
-        }
+        if (ImGui::Button("Pause") && Ichigo::current_song)
+            set_player_state(PlayerState::PAUSED);
     } else if (player_state == Ichigo::PlayerState::PAUSED) {
-        if (ImGui::Button("Play") && Ichigo::current_song) {
-            player_state = Ichigo::PlayerState::PLAYING;
-            Ichigo::platform_playback_set_state(player_state);
-        }
+        if (ImGui::Button("Play") && Ichigo::current_song)
+            set_player_state(PlayerState::PLAYING);
     } else {
         ImGui::BeginDisabled();
         ImGui::Button("Play");
@@ -510,19 +539,8 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
 
     ImGui::SameLine();
 
-#define STOP_IF_NOT_CHANGING_SONGS                         \
-do {                                                       \
-    if (!Ichigo::must_realloc_sound_buffer) {              \
-        player_state = Ichigo::PlayerState::STOPPED;       \
-        Ichigo::platform_playback_set_state(player_state); \
-        deinit_avcodec();                                  \
-        Ichigo::current_song = nullptr;                    \
-        play_cursor = 0;                                   \
-    }                                                      \
-} while (0)                                                \
-
     if (ImGui::Button("Stop") && player_state != Ichigo::PlayerState::STOPPED && Ichigo::current_song)
-        STOP_IF_NOT_CHANGING_SONGS;
+        set_player_state(PlayerState::STOPPED);
 
     ImGui::EndGroup();
     ImGui::End();
@@ -532,20 +550,13 @@ do {                                                       \
         if (PlayQueue::has_more_songs())
             change_song_and_play(IchigoDB::song(PlayQueue::next_song_id()));
         else
-            STOP_IF_NOT_CHANGING_SONGS;
+            set_player_state(PlayerState::STOPPED);
     }
-
-#undef STOP_IF_NOT_CHANGING_SONGS
 
     ImGui::Render();
     ImDrawData *draw_data = ImGui::GetDrawData();
     bool minimized = draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f;
     if (!minimized) {
-        Ichigo::vk_context.imgui_window_data.ClearValue.color.float32[0] = 0.5;
-        Ichigo::vk_context.imgui_window_data.ClearValue.color.float32[1] = 0.5;
-        Ichigo::vk_context.imgui_window_data.ClearValue.color.float32[2] = 0.5;
-        Ichigo::vk_context.imgui_window_data.ClearValue.color.float32[3] = 1;
-
         frame_render(draw_data);
         frame_present();
     }
