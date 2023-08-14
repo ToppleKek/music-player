@@ -92,6 +92,7 @@ static void init_avcodec_for_song(Ichigo::Song *song) {
         song->duration = static_cast<double>(length_in_bytes) / (song->sample_rate * mp3.channels * sizeof(i16)) * 1000.0;
         song->duration_in_bytes = length_in_bytes;
         std::printf("duration=%llu in_bytes=%llu\n", song->duration, song->duration_in_bytes);
+        std::printf("Number of frames: %llu\n", drmp3_get_pcm_frame_count(&mp3));
         Ichigo::current_song_has_data = true;
         drmp3_initialized = true;
     } break;
@@ -192,6 +193,10 @@ void Ichigo::set_player_state(Ichigo::PlayerState state) {
             }
         } break;
     }
+}
+
+Ichigo::PlayerState Ichigo::get_player_state() {
+    return player_state;
 }
 
 static std::string s_to_mmss(u32 sec) {
@@ -340,6 +345,7 @@ static void do_sorted_song_index_list_resort() {
     sorted_song_index_list_insert_range(0, size);
 }
 
+// FIXME: play cursor delta should be in msec instead of bytes tbh
 void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 play_cursor_delta) {
     const u64 new_total_size = IchigoDB::total_size();
     if (last_total_song_count != new_total_size) {
@@ -424,11 +430,12 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
 
-    unsigned long seconds = 0;
+    u64 miliseconds = 0;
     if (Ichigo::current_song) {
         play_cursor += play_cursor_delta;
-        seconds = play_cursor / (Ichigo::current_song->sample_rate * Ichigo::current_song->channel_count * sizeof(i16));
+        miliseconds = play_cursor / ((Ichigo::current_song->sample_rate * Ichigo::current_song->channel_count * sizeof(i16)) / 1000);
     }
+    u64 seconds = miliseconds / 1000;
 
     ImGui::SetNextWindowPos({0, 0});
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
@@ -546,7 +553,7 @@ void Ichigo::do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 
     ImGui::End();
 
     // Stop current song when the play cursor plays over the end of the song
-    if (player_state == Ichigo::PlayerState::PLAYING && Ichigo::current_song && seconds >= (current_song->duration / 1000.0)) {
+    if (player_state == Ichigo::PlayerState::PLAYING && Ichigo::current_song && miliseconds >= current_song->duration) {
         if (PlayQueue::has_more_songs())
             change_song_and_play(IchigoDB::song(PlayQueue::next_song_id()));
         else

@@ -40,6 +40,7 @@ void do_frame(u32 window_width, u32 window_height, float dpi_scale, u64 play_cur
 u64 fill_sample_buffer(u8 *buffer, u64 buffer_size);
 void play_song(u64 id);
 void set_player_state(Ichigo::PlayerState state);
+Ichigo::PlayerState get_player_state();
 void deinit();
 
 // Thread *platform_create_thread(ThreadEntryProc *entry_proc, void *data);
