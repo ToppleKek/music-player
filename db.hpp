@@ -1,6 +1,5 @@
 #pragma once
 #include <string>
-#include <vector>
 #include "ichigo.hpp"
 
 namespace IchigoDB {
@@ -13,4 +12,5 @@ u64 total_size();
 // FIXME: Should this really return a pointer? For some reason in the main application we have current_song defined as a pointer.
 // Thats the only reason that this returns a pointer.
 Ichigo::Song *song(u64 i);
+const Util::IchigoVector<Ichigo::Playlist> &playlists();
 }  // namespace IchigoDB

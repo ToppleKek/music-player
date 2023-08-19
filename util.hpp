@@ -2,6 +2,9 @@
 #include "common.hpp"
 #include <cstring>
 #include <cassert>
+#include <cstdlib>
+#include <type_traits>
+#include <cstdio>
 
 namespace Util {
 template<typename T>
@@ -9,9 +12,19 @@ class IchigoVector {
 public:
     IchigoVector(u64 initial_capacity) : m_capacity(initial_capacity), m_data(new T[initial_capacity]) {}
     IchigoVector() : IchigoVector(16) {}
+    IchigoVector(const IchigoVector<T> &other) { operator=(other); }
+    IchigoVector(IchigoVector<T> &&other) : m_capacity(other.m_capacity), m_size(other.m_size), m_data(other.m_data) {}
+    IchigoVector &operator=(const IchigoVector<T> &other) {
+        m_capacity = other.m_capacity;
+        m_size = other.m_size;
+        std::memcpy(m_data, other.m_data, m_size * sizeof(T));
+    }
     ~IchigoVector() { delete[] m_data; }
 
     T &at(u64 i) { assert(i < m_size); return m_data[i]; }
+    const T &at(u64 i) const { assert(i < m_size); return m_data[i]; }
+    const T *data() const { return m_data; }
+    T *release_data() { T *ret = m_data; m_data = new T[16]; m_capacity = 16; m_size = 0; return ret; }
     u64 size() const { return m_size; }
     void clear() { m_size = 0; }
 
@@ -31,11 +44,12 @@ public:
         ++m_size;
     }
 
-    void append(T item) {
+    u64 append(T item) {
         if (m_size == m_capacity)
             expand();
 
         m_data[m_size++] = item;
+        return m_size - 1;
     }
 
     T remove(u64 i) {
@@ -50,6 +64,15 @@ public:
         return ret;
     }
 
+    i64 index_of(const T &item) const {
+        for (i64 i = 0; i < m_size; ++i) {
+            if (m_data[i] == item)
+                return i;
+        }
+
+        return -1;
+    }
+
 private:
     u64 m_capacity;
     u64 m_size = 0;
@@ -57,7 +80,10 @@ private:
 
     void expand() {
         T *new_data = new T[m_capacity *= 2];
-        std::memcpy(new_data, m_data, m_size * sizeof(T));
+
+        for (u64 i = 0; i < m_size; ++i)
+            new_data[i] = m_data[i];
+
         delete[] m_data;
         m_data = new_data;
     }

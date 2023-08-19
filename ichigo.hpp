@@ -1,6 +1,7 @@
 #pragma once
 #include "vulkan.hpp"
 #include "tags.hpp"
+#include "util.hpp"
 #include <string>
 #include <vector>
 
@@ -19,6 +20,13 @@ struct Song {
     std::string path;
     Tags::Tag tag;
     SongFormat format;
+};
+
+struct Playlist {
+    i64 *songs;
+    char **unresolved_paths;
+    std::string name;
+    u64 size;
 };
 
 enum class PlayerState {
@@ -45,7 +53,8 @@ void deinit();
 
 // Thread *platform_create_thread(ThreadEntryProc *entry_proc, void *data);
 std::FILE *platform_open_file(const std::string &path, const std::string &mode);
-std::vector<std::string> platform_recurse_directory(const std::string &path, const std::vector<const char *> extension_filter);
+bool platform_file_exists(const char *path);
+Util::IchigoVector<std::string> platform_recurse_directory(const std::string &path, const char **extension_filter, const u16 extension_filter_count);
 void platform_playback_set_state(const Ichigo::PlayerState state);
 void platform_playback_reset_for_seek(bool should_play);
 }

@@ -29,34 +29,19 @@ static bool play_state_dirty_flag = false;
 static u64 last_play_cursor_pos = 0;
 static u64 dsound_buffer_size = 0;
 
-// struct Ichigo::Thread {
-//     HANDLE thread_handle;
-//     DWORD thread_id;
-// };
-
-// struct ThreadParams {
-//     Ichigo::ThreadEntryProc *entry_proc;
-//     void *data;
-// };
-
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// static DWORD thread_proc(void *data) {
-//     auto params = reinterpret_cast<ThreadParams *>(data);
-//     return params->entry_proc(params->data);
-// }
+static wchar_t *to_wide_char(const char *str) {
+    i32 buf_size = MultiByteToWideChar(CP_UTF8, 0, str, -1, nullptr, 0);
+    assert(buf_size > 0);
+    wchar_t *wide_buf = new wchar_t[buf_size];
+    MultiByteToWideChar(CP_UTF8, 0, str, -1, wide_buf, buf_size);
+    return wide_buf;
+}
 
-// Ichigo::Thread *Ichigo::platform_create_thread(Ichigo::ThreadEntryProc *entry_proc, void *data) {
-//     ThreadParams params = {
-//         entry_proc,
-//         data
-//     };
-
-//     Ichigo::Thread ret;
-//     ret.thread_handle = CreateThread(nullptr, 0, thread_proc, &params, 0, &ret.thread_id);
-
-//     return ret;
-// }
+static void free_wide_char_conversion(wchar_t *buf) {
+    delete[] buf;
+}
 
 std::FILE *Ichigo::platform_open_file(const std::string &path, const std::string &mode) {
     i32 buf_size = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
@@ -76,7 +61,15 @@ std::FILE *Ichigo::platform_open_file(const std::string &path, const std::string
     return ret;
 }
 
-static bool is_filtered_file(const wchar_t *filename, const std::vector<const char *> &extension_filter) {
+bool Ichigo::platform_file_exists(const char *path) {
+    wchar_t *wide_path = to_wide_char(path);
+    DWORD attributes = GetFileAttributesW(wide_path);
+    bool ret = attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+    free_wide_char_conversion(wide_path);
+    return ret;
+}
+
+static bool is_filtered_file(const wchar_t *filename, const char **extension_filter, const u16 extension_filter_count) {
     // Find the last period in the file name
     u64 period_index = 0;
     for (u64 current_index = 0; filename[current_index] != '\0'; ++current_index) {
@@ -85,7 +78,8 @@ static bool is_filtered_file(const wchar_t *filename, const std::vector<const ch
     }
 
     wchar_t ext_wide[16] = {};
-    for (auto ext : extension_filter) {
+    for (u32 i = 0; i < extension_filter_count; ++i) {
+        const char *ext = extension_filter[i];
         i32 buf_size = MultiByteToWideChar(CP_UTF8, 0, ext, -1, nullptr, 0);
         assert(buf_size <= 16);
         MultiByteToWideChar(CP_UTF8, 0, ext, -1, ext_wide, buf_size);
@@ -97,7 +91,7 @@ static bool is_filtered_file(const wchar_t *filename, const std::vector<const ch
     return false;
 }
 
-void visit_directory(const wchar_t *path, std::vector<std::string> *files, const std::vector<const char *> &extension_filter) {
+void visit_directory(const wchar_t *path, Util::IchigoVector<std::string> *files, const char **extension_filter, const u16 extension_filter_count) {
     HANDLE find_handle;
     WIN32_FIND_DATAW find_data;
     wchar_t path_with_filter[2048] = {};
@@ -112,9 +106,9 @@ void visit_directory(const wchar_t *path, std::vector<std::string> *files, const
             if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
                 wchar_t sub_dir[2048] = {};
                 _snwprintf(sub_dir, 2048, L"%s/%s", path, find_data.cFileName);
-                visit_directory(sub_dir, files, extension_filter);
+                visit_directory(sub_dir, files, extension_filter, extension_filter_count);
             } else {
-                if (!is_filtered_file(find_data.cFileName, extension_filter))
+                if (!is_filtered_file(find_data.cFileName, extension_filter, extension_filter_count))
                     continue;
 
                 wchar_t full_path[2048] = {};
@@ -123,7 +117,7 @@ void visit_directory(const wchar_t *path, std::vector<std::string> *files, const
                 char *u8_bytes = new char[u8_buf_size]();
                 WideCharToMultiByte(CP_UTF8, 0, full_path, -1, u8_bytes, u8_buf_size, nullptr, nullptr);
 
-                files->emplace_back(u8_bytes);
+                files->append(u8_bytes);
                 delete[] u8_bytes;
             }
         } while (FindNextFileW(find_handle, &find_data) != 0);
@@ -135,15 +129,15 @@ void visit_directory(const wchar_t *path, std::vector<std::string> *files, const
     }
 }
 
-std::vector<std::string> Ichigo::platform_recurse_directory(const std::string &path, const std::vector<const char *> extension_filter) {
-    std::vector<std::string> ret;
+Util::IchigoVector<std::string> Ichigo::platform_recurse_directory(const std::string &path, const char **extension_filter, const u16 extension_filter_count) {
+    Util::IchigoVector<std::string> ret;
 
     i32 buf_size = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
     assert(buf_size > 0);
     wchar_t *wide_buf = new wchar_t[buf_size]();
     MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wide_buf, buf_size);
 
-    visit_directory(wide_buf, &ret, extension_filter);
+    visit_directory(wide_buf, &ret, extension_filter, extension_filter_count);
 
     delete[] wide_buf;
     return ret;
